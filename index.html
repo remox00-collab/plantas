@@ -64,8 +64,9 @@
   #plan3DCanvas{display:block; width:100%; height:100%; touch-action:none;}
   #fpOverlay{display:none; position:absolute; inset:0;}
   #fpLookArea{position:absolute; inset:0;}
-  #fpJoystick{position:absolute; left:16px; bottom:16px; width:100px; height:100px; border-radius:50%; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.3);}
-  #fpJoystickKnob{position:absolute; left:30px; top:30px; width:40px; height:40px; border-radius:50%; background:rgba(94,234,212,0.65);}
+  #fpJoystick,#fpLook{position:absolute; bottom:16px; width:100px; height:100px; border-radius:50%; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.22); touch-action:none;}
+  #fpJoystick{left:16px;} #fpLook{right:16px;}
+  #fpJoystickKnob,#fpLookKnob{position:absolute; left:30px; top:30px; width:40px; height:40px; border-radius:50%; background:rgba(255,255,255,0.28);}
   #fpExitBtn{position:absolute; top:10px; right:10px;}
   #planCanvas{display:block; touch-action:none;}
   .empty{color:var(--muted); font-size:13px; text-align:center; padding:20px 0;}
@@ -184,6 +185,7 @@
       <div id="fpOverlay">
         <div id="fpLookArea"></div>
         <div id="fpJoystick"><div id="fpJoystickKnob"></div></div>
+        <div id="fpLook"><div id="fpLookKnob"></div></div>
         <button id="fpExitBtn">Sair</button>
       </div>
     </div>
@@ -245,7 +247,9 @@
       <input id="wallLenInput" inputmode="decimal" style="width:110px;">
       <button class="primary" id="applyWallLen">Aplicar</button>
       <button id="cancelWallSel">Cancelar</button>
+      <button id="removeOneWall" class="danger">Remover só esta parede</button>
     </div>
+    <p class="hint">Remover só esta parede transforma o cômodo em paredes soltas, sem a parede escolhida (portas/janelas desse cômodo se perdem).</p>
   </div>
 
 </main>
@@ -702,7 +706,7 @@
 
   // --- Visão 3D ---
   let view3D = false, threeScene=null, threeCamera=null, threeRenderer=null, threeControls=null;
-  let fpMode=false, fpControls=null, fpKeys={}, fpJoystickVec={x:0,y:0}, sceneCenter={x:3,z:3};
+  let fpMode=false, fpControls=null, fpKeys={}, fpJoystickVec={x:0,y:0}, fpLookVec={x:0,y:0}, sceneCenter={x:3,z:3};
   let collisionSegs = [];
 
   function ensureThree(){
@@ -722,13 +726,19 @@
     threeControls.enableDamping = true;
     threeControls.maxPolarAngle = Math.PI*0.49;
     fpControls = new THREE.PointerLockControls(threeCamera, threeRenderer.domElement);
-    canvas.addEventListener('click', () => { if(fpMode && !fpControls.isLocked) fpControls.lock(); });
+    const lockMouse = () => { if(fpMode && !fpControls.isLocked && !window.matchMedia('(pointer: coarse)').matches){ try{ fpControls.lock(); }catch(e){} } };
+    canvas.addEventListener('click', lockMouse);
+    document.getElementById('fpLookArea').addEventListener('click', lockMouse);
     document.addEventListener('pointerlockchange', () => { if(!document.pointerLockElement && fpMode) exitFirstPerson(); });
     setupFirstPersonInput();
     (function animate(){
       requestAnimationFrame(animate);
       if(!view3D) return;
       if(fpMode){
+        if(fpLookVec.x || fpLookVec.y){
+          threeCamera.rotation.y -= fpLookVec.x*0.035;
+          threeCamera.rotation.x = Math.max(-1.3, Math.min(1.3, threeCamera.rotation.x - fpLookVec.y*0.022));
+        }
         const speed = 0.07;
         let mx=0, mz=0;
         if(fpKeys['w']||fpKeys['arrowup']) mz += speed;
@@ -741,7 +751,14 @@
           const prev = threeCamera.position.clone();
           fpControls.moveRight(mx);
           fpControls.moveForward(mz);
-          if(collides(threeCamera.position.x, threeCamera.position.z)) threeCamera.position.copy(prev);
+          const nx = threeCamera.position.x, nz = threeCamera.position.z;
+          const stuck = collides(prev.x, prev.z);
+          if(!stuck && collides(nx, nz)){
+            // tenta deslizar ao longo da parede (um eixo de cada vez)
+            if(!collides(nx, prev.z)) threeCamera.position.set(nx, prev.y, prev.z);
+            else if(!collides(prev.x, nz)) threeCamera.position.set(prev.x, prev.y, nz);
+            else threeCamera.position.copy(prev);
+          }
           threeCamera.position.y = 1.6;
         }
       }else{
@@ -774,16 +791,48 @@
   }
   function enterFirstPerson(){
     fpMode = true;
+    fpKeys = {}; fpJoystickVec = {x:0,y:0}; fpLookVec = {x:0,y:0};
     threeControls.enabled = false;
-    threeCamera.position.set(sceneCenter.x, 1.6, sceneCenter.z);
-    threeCamera.rotation.set(0,0,0);
+    const clearance = (x,z) => { let m = 99; for(const sg of collisionSegs){ m = Math.min(m, segDist(x,z,sg.x1,sg.z1,sg.x2,sg.z2)); } return m; };
+    const inPoly = (pt, poly) => { let ins=false; for(let i=0,j=poly.length-1;i<poly.length;j=i++){ const a=poly[i], b=poly[j]; if(((a.y>pt.y)!==(b.y>pt.y)) && (pt.x < (b.x-a.x)*(pt.y-a.y)/(b.y-a.y)+a.x)) ins=!ins; } return ins; };
+    let best = null, bestC = -1;
+    rooms.forEach(r => {
+      const pts = roomLocalPoints(r);
+      for(let gx=0.25; gx<1; gx+=0.1) for(let gy=0.25; gy<1; gy+=0.1){
+        const lp = {x:gx*r.len, y:gy*r.wid};
+        if(!inPoly(lp, pts)) continue;
+        const w = localToWorldRoom(lp.x - r.len/2, lp.y - r.wid/2, r);
+        const c = clearance(w.x, w.z);
+        if(c > bestC){ bestC = c; best = w; }
+      }
+    });
+    if(!best) best = {x:sceneCenter.x, z:sceneCenter.z};
+    // vira de frente pra direção com mais espaço livre
+    let bestYaw = 0, bestD = -1;
+    for(let k=0;k<24;k++){
+      const ang = k*Math.PI/12, dx = Math.sin(ang), dz = Math.cos(ang);
+      let d = 0;
+      while(d < 12){ d += 0.1; if(collides(best.x+dx*d, best.z+dz*d)) break; }
+      if(d > bestD){ bestD = d; bestYaw = Math.atan2(-dx, -dz); }
+    }
+    threeCamera.position.set(best.x, 1.6, best.z);
+    threeCamera.rotation.set(0, bestYaw, 0);
     document.getElementById('fpOverlay').style.display = 'block';
     document.getElementById('fpEnterBtn').textContent = 'Sair do modo 1ª pessoa';
   }
   function exitFirstPerson(){
+    const wasFp = fpMode;
     fpMode = false;
+    fpKeys = {}; fpJoystickVec = {x:0,y:0}; fpLookVec = {x:0,y:0};
     if(fpControls && fpControls.isLocked) fpControls.unlock();
-    if(threeControls) threeControls.enabled = true;
+    if(threeControls){
+      threeControls.enabled = true;
+      if(wasFp){
+        threeCamera.position.set(sceneCenter.x+8, 9, sceneCenter.z+8);
+        threeControls.target.set(sceneCenter.x, 1, sceneCenter.z);
+        threeControls.update();
+      }
+    }
     document.getElementById('fpOverlay').style.display = 'none';
     document.getElementById('fpEnterBtn').textContent = '🚶 Modo primeira pessoa';
   }
@@ -797,50 +846,49 @@
     document.getElementById('fpEnterBtn').addEventListener('click', () => { fpMode ? exitFirstPerson() : enterFirstPerson(); });
     document.getElementById('fpExitBtn').addEventListener('click', exitFirstPerson);
 
+    // Mouse (computador): arrastar com o botão esquerdo gira a câmera; se o mouse estiver travado (clique), ele gira sozinho
     const lookArea = document.getElementById('fpLookArea');
-    let lookId=null, lookLast=null;
-    lookArea.addEventListener('touchstart', (e) => {
-      for(const t of e.changedTouches){ if(lookId===null){ lookId=t.identifier; lookLast={x:t.clientX,y:t.clientY}; } }
-    }, {passive:false});
-    lookArea.addEventListener('touchmove', (e) => {
-      for(const t of e.touches){
-        if(t.identifier===lookId){
-          const dx=t.clientX-lookLast.x, dy=t.clientY-lookLast.y;
-          threeCamera.rotation.y -= dx*0.004;
-          threeCamera.rotation.x = Math.max(-1.2, Math.min(1.2, threeCamera.rotation.x - dy*0.004));
-          lookLast = {x:t.clientX,y:t.clientY};
-        }
-      }
-      e.preventDefault();
-    }, {passive:false});
-    lookArea.addEventListener('touchend', (e) => { for(const t of e.changedTouches){ if(t.identifier===lookId) lookId=null; } });
-
-    const joy = document.getElementById('fpJoystick'), knob = document.getElementById('fpJoystickKnob');
-    let joyId=null, joyCenter=null;
-    joy.addEventListener('touchstart', (e) => {
-      const t = e.changedTouches[0];
-      joyId = t.identifier;
-      const rect = joy.getBoundingClientRect();
-      joyCenter = {x:rect.left+rect.width/2, y:rect.top+rect.height/2};
-      e.preventDefault();
-    }, {passive:false});
-    joy.addEventListener('touchmove', (e) => {
-      for(const t of e.touches){
-        if(t.identifier===joyId){
-          let dx=t.clientX-joyCenter.x, dy=t.clientY-joyCenter.y;
-          const maxR=35, d=Math.hypot(dx,dy);
-          if(d>maxR){ dx=dx/d*maxR; dy=dy/d*maxR; }
-          knob.style.left=(30+dx)+'px'; knob.style.top=(30+dy)+'px';
-          fpJoystickVec = {x:dx/maxR, y:dy/maxR};
-        }
-      }
-      e.preventDefault();
-    }, {passive:false});
-    joy.addEventListener('touchend', (e) => {
-      for(const t of e.changedTouches){
-        if(t.identifier===joyId){ joyId=null; fpJoystickVec={x:0,y:0}; knob.style.left='30px'; knob.style.top='30px'; }
-      }
+    let dragLook = false;
+    lookArea.addEventListener('mousedown', (e) => { if(e.button===0) dragLook = true; });
+    window.addEventListener('mouseup', () => { dragLook = false; });
+    window.addEventListener('mousemove', (e) => {
+      if(!fpMode || fpControls.isLocked || !dragLook) return;
+      threeCamera.rotation.y -= e.movementX*0.003;
+      threeCamera.rotation.x = Math.max(-1.3, Math.min(1.3, threeCamera.rotation.x - e.movementY*0.003));
     });
+
+    // Analógicos de toque (celular): esquerdo anda, direito olha
+    function makeStick(el, knob, onChange){
+      let id=null, c=null;
+      el.addEventListener('touchstart', (e) => {
+        const t = e.changedTouches[0];
+        id = t.identifier;
+        const r = el.getBoundingClientRect();
+        c = {x:r.left+r.width/2, y:r.top+r.height/2};
+        e.preventDefault();
+      }, {passive:false});
+      el.addEventListener('touchmove', (e) => {
+        for(const t of e.touches){
+          if(t.identifier===id){
+            let dx=t.clientX-c.x, dy=t.clientY-c.y;
+            const maxR=35, d=Math.hypot(dx,dy);
+            if(d>maxR){ dx=dx/d*maxR; dy=dy/d*maxR; }
+            knob.style.left=(30+dx)+'px'; knob.style.top=(30+dy)+'px';
+            onChange({x:dx/maxR, y:dy/maxR});
+          }
+        }
+        e.preventDefault();
+      }, {passive:false});
+      const end = (e) => {
+        for(const t of e.changedTouches){
+          if(t.identifier===id){ id=null; knob.style.left='30px'; knob.style.top='30px'; onChange({x:0,y:0}); }
+        }
+      };
+      el.addEventListener('touchend', end);
+      el.addEventListener('touchcancel', end);
+    }
+    makeStick(document.getElementById('fpJoystick'), document.getElementById('fpJoystickKnob'), v => { fpJoystickVec = v; });
+    makeStick(document.getElementById('fpLook'), document.getElementById('fpLookKnob'), v => { fpLookVec = v; });
   }
   function resize3D(){
     const wrap = document.getElementById('plan3DWrap');
@@ -1291,6 +1339,29 @@
     saveRooms(); renderRoomList(); renderPlan();
     showWallEditor(room, selectedWallIndex);
   });
+  function removeSingleRoomWall(room, index){
+    const g = roomGeom(room);
+    const pts = roomLocalPoints(room).map(p => {
+      const q = rotatePoint(g.px+p.x*g.eff, g.py+p.y*g.eff, g.cx, g.cy, g.rad);
+      return {x:(q[0]-MARGIN)/g.eff, y:(q[1]-MARGIN)/g.eff};
+    });
+    const n = pts.length;
+    const base = Date.now();
+    for(let i=0;i<n;i++){
+      if(i === index) continue;
+      const a = pts[i], b = pts[(i+1)%n];
+      walls.push({id: base+i, x1:+a.x.toFixed(3), y1:+a.y.toFixed(3), x2:+b.x.toFixed(3), y2:+b.y.toFixed(3)});
+    }
+    rooms = rooms.filter(rm => rm.id !== room.id);
+    selectedRoomId = null; selectedWallIndex = null;
+    hideWallEditor();
+    saveRooms(); saveWalls(); renderRoomList(); renderPlan();
+  }
+  document.getElementById('removeOneWall').addEventListener('click', () => {
+    if(selectedWallIndex === null || !selectedRoomId) return;
+    const room = rooms.find(rm => rm.id === selectedRoomId);
+    if(room) removeSingleRoomWall(room, selectedWallIndex);
+  });
   document.getElementById('cancelWallSel').addEventListener('click', () => {
     selectedWallIndex = null; hideWallEditor(); renderPlan();
   });
@@ -1660,6 +1731,11 @@
       }
       return;
     }
+    const rw = wallAt(x,y);
+    if(rw){
+      if(confirm('Apagar só esta parede? O cômodo vira paredes soltas.')) removeSingleRoomWall(rw.room, rw.index);
+      return;
+    }
     const r = roomAt(x,y);
     if(r){
       if(confirm('Apagar o cômodo "' + r.name + '"?')){
@@ -1688,6 +1764,10 @@
       pendingOpeningWall = null; editOpeningIndex = null;
       e.preventDefault();
       return;
+    }
+    if(selectedRoomId && selectedWallIndex !== null){
+      const rr = rooms.find(rm => rm.id === selectedRoomId);
+      if(rr){ removeSingleRoomWall(rr, selectedWallIndex); e.preventDefault(); return; }
     }
     if(selectedRoomId){
       const r = rooms.find(rm => rm.id === selectedRoomId);

@@ -7,6 +7,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
 <style>
   :root{
     --bg:#141c28; --surface:#1c2735; --surface2:#243244; --line:#33465d;
@@ -59,8 +60,13 @@
   .roomItem .dims{font-size:12px; color:var(--muted);}
   .roomItem .name{font-weight:600;}
   #planWrap{overflow:auto; max-height:70vh; border:1px solid var(--line); border-radius:8px; background:#0e1620; -webkit-overflow-scrolling:touch; overscroll-behavior:contain;}
-  #plan3DWrap{display:none; width:100%; height:65vh; border:1px solid var(--line); border-radius:8px; background:#0e1620; overflow:hidden;}
+  #plan3DWrap{display:none; position:relative; width:100%; height:65vh; border:1px solid var(--line); border-radius:8px; background:#0e1620; overflow:hidden;}
   #plan3DCanvas{display:block; width:100%; height:100%; touch-action:none;}
+  #fpOverlay{display:none; position:absolute; inset:0;}
+  #fpLookArea{position:absolute; inset:0;}
+  #fpJoystick{position:absolute; left:16px; bottom:16px; width:100px; height:100px; border-radius:50%; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.3);}
+  #fpJoystickKnob{position:absolute; left:30px; top:30px; width:40px; height:40px; border-radius:50%; background:rgba(94,234,212,0.65);}
+  #fpExitBtn{position:absolute; top:10px; right:10px;}
   #planCanvas{display:block; touch-action:none;}
   .empty{color:var(--muted); font-size:13px; text-align:center; padding:20px 0;}
   .step{color:var(--accent); font-size:12px; font-weight:600; margin-bottom:8px;}
@@ -173,8 +179,18 @@
       <button class="primary" id="toggle3DBtn">Ver em 3D</button>
     </div>
     <div id="planWrap"><canvas id="planCanvas"></canvas></div>
-    <div id="plan3DWrap"><canvas id="plan3DCanvas"></canvas></div>
+    <div id="plan3DWrap">
+      <canvas id="plan3DCanvas"></canvas>
+      <div id="fpOverlay">
+        <div id="fpLookArea"></div>
+        <div id="fpJoystick"><div id="fpJoystickKnob"></div></div>
+        <button id="fpExitBtn">Sair</button>
+      </div>
+    </div>
     <p class="hint" id="hint3D" style="display:none;">Arraste pra girar a câmera, roda do mouse (ou pinça no celular) pra dar zoom. Isso é só visualização — pra editar, volte ao 2D.</p>
+    <div class="row" id="fpRow" style="display:none; margin-top:8px;">
+      <button class="primary" id="fpEnterBtn">🚶 Modo primeira pessoa</button>
+    </div>
     <p class="hint" id="openingHint">Modo portas/janelas: toque numa parede de qualquer cômodo pra adicionar.</p>
     <p class="hint" id="wallDrawHint">Modo parede manual: toque no ponto inicial, depois no ponto final da parede.</p>
     <p class="hint">Toque num cômodo pra selecionar, arraste pra mover. Com ele selecionado, arraste a alça verde acima dele pra girar livremente. Pinça com dois dedos (ou os botões de zoom acima) pra aproximar. Em cômodos com forma medida por AR/ângulos, aparecem bolinhas no meio de cada parede — toque numa pra editar só aquela parede.</p>
@@ -614,6 +630,14 @@
       div.querySelector('.name').addEventListener('click', () => focusRoomInPlan(r));
       const btnRow = document.createElement('div');
       btnRow.className = 'row';
+      const colorInput = document.createElement('input');
+      colorInput.type = 'color'; colorInput.value = r.wallColor || '#5eead4';
+      colorInput.title = 'Cor da parede (2D e 3D)';
+      colorInput.style.cssText = 'width:34px;height:34px;padding:2px;border-radius:6px;border:1px solid var(--line);background:var(--bg);';
+      colorInput.addEventListener('input', () => {
+        r.wallColor = colorInput.value;
+        saveRooms(); renderPlan();
+      });
       const lockBtn = document.createElement('button'); lockBtn.textContent = r.locked ? '🔓 Destravar' : '🔒 Travar';
       lockBtn.title = r.locked ? 'Permitir mover este cômodo' : 'Travar posição pra não esbarrar sem querer';
       lockBtn.addEventListener('click', () => {
@@ -632,7 +656,7 @@
         rooms = rooms.filter(x => x.id !== r.id);
         saveRooms(); renderRoomList(); renderPlan();
       });
-      btnRow.append(lockBtn, rotL, rotR, editBtn, del);
+      btnRow.append(colorInput, lockBtn, rotL, rotR, editBtn, del);
       div.appendChild(btnRow);
       el.appendChild(div);
     });
@@ -678,6 +702,8 @@
 
   // --- Visão 3D ---
   let view3D = false, threeScene=null, threeCamera=null, threeRenderer=null, threeControls=null;
+  let fpMode=false, fpControls=null, fpKeys={}, fpJoystickVec={x:0,y:0}, sceneCenter={x:3,z:3};
+  let collisionSegs = [];
 
   function ensureThree(){
     if(threeRenderer) return;
@@ -686,6 +712,7 @@
     threeScene = new THREE.Scene();
     threeScene.background = new THREE.Color(0x141c28);
     threeCamera = new THREE.PerspectiveCamera(55, 1, 0.1, 500);
+    threeCamera.rotation.order = 'YXZ';
     threeScene.add(new THREE.AmbientLight(0xffffff, 0.65));
     const dir = new THREE.DirectionalLight(0xffffff, 0.8);
     dir.position.set(10,15,8);
@@ -694,12 +721,126 @@
     threeControls = new THREE.OrbitControls(threeCamera, threeRenderer.domElement);
     threeControls.enableDamping = true;
     threeControls.maxPolarAngle = Math.PI*0.49;
+    fpControls = new THREE.PointerLockControls(threeCamera, threeRenderer.domElement);
+    canvas.addEventListener('click', () => { if(fpMode && !fpControls.isLocked) fpControls.lock(); });
+    document.addEventListener('pointerlockchange', () => { if(!document.pointerLockElement && fpMode) exitFirstPerson(); });
+    setupFirstPersonInput();
     (function animate(){
       requestAnimationFrame(animate);
       if(!view3D) return;
-      threeControls.update();
+      if(fpMode){
+        const speed = 0.07;
+        let mx=0, mz=0;
+        if(fpKeys['w']||fpKeys['arrowup']) mz += speed;
+        if(fpKeys['s']||fpKeys['arrowdown']) mz -= speed;
+        if(fpKeys['a']||fpKeys['arrowleft']) mx -= speed;
+        if(fpKeys['d']||fpKeys['arrowright']) mx += speed;
+        mx += fpJoystickVec.x*speed;
+        mz -= fpJoystickVec.y*speed;
+        if(mx||mz){
+          const prev = threeCamera.position.clone();
+          fpControls.moveRight(mx);
+          fpControls.moveForward(mz);
+          if(collides(threeCamera.position.x, threeCamera.position.z)) threeCamera.position.copy(prev);
+          threeCamera.position.y = 1.6;
+        }
+      }else{
+        threeControls.update();
+      }
       threeRenderer.render(threeScene, threeCamera);
     })();
+  }
+  function segDist(px,pz,x1,z1,x2,z2){
+    const dx=x2-x1, dz=z2-z1, len2=dx*dx+dz*dz;
+    if(len2<1e-6) return Math.hypot(px-x1,pz-z1);
+    let t = ((px-x1)*dx+(pz-z1)*dz)/len2;
+    t = Math.max(0,Math.min(1,t));
+    return Math.hypot(px-(x1+dx*t), pz-(z1+dz*t));
+  }
+  function collides(x,z){
+    for(const s of collisionSegs){ if(segDist(x,z,s.x1,s.z1,s.x2,s.z2) < 0.34) return true; }
+    return false;
+  }
+  function localToWorldRoom(lx,lz,r){
+    const rad = -(r.rot||0)*Math.PI/180;
+    const wx = lx*Math.cos(rad) + lz*Math.sin(rad);
+    const wz = -lx*Math.sin(rad) + lz*Math.cos(rad);
+    return {x: wx + r.x + r.len/2, z: wz + r.y + r.wid/2};
+  }
+  function segEndpoints(mx,my,dx,dy,segLen){
+    const len = Math.hypot(dx,dy) || 1;
+    const ux=dx/len, uy=dy/len;
+    return {x1:mx-ux*segLen/2, y1:my-uy*segLen/2, x2:mx+ux*segLen/2, y2:my+uy*segLen/2};
+  }
+  function enterFirstPerson(){
+    fpMode = true;
+    threeControls.enabled = false;
+    threeCamera.position.set(sceneCenter.x, 1.6, sceneCenter.z);
+    threeCamera.rotation.set(0,0,0);
+    document.getElementById('fpOverlay').style.display = 'block';
+    document.getElementById('fpEnterBtn').textContent = 'Sair do modo 1ª pessoa';
+  }
+  function exitFirstPerson(){
+    fpMode = false;
+    if(fpControls && fpControls.isLocked) fpControls.unlock();
+    if(threeControls) threeControls.enabled = true;
+    document.getElementById('fpOverlay').style.display = 'none';
+    document.getElementById('fpEnterBtn').textContent = '🚶 Modo primeira pessoa';
+  }
+  function setupFirstPersonInput(){
+    document.addEventListener('keydown', (e) => {
+      const tag = document.activeElement ? document.activeElement.tagName : '';
+      if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
+      fpKeys[e.key.toLowerCase()] = true;
+    });
+    document.addEventListener('keyup', (e) => { fpKeys[e.key.toLowerCase()] = false; });
+    document.getElementById('fpEnterBtn').addEventListener('click', () => { fpMode ? exitFirstPerson() : enterFirstPerson(); });
+    document.getElementById('fpExitBtn').addEventListener('click', exitFirstPerson);
+
+    const lookArea = document.getElementById('fpLookArea');
+    let lookId=null, lookLast=null;
+    lookArea.addEventListener('touchstart', (e) => {
+      for(const t of e.changedTouches){ if(lookId===null){ lookId=t.identifier; lookLast={x:t.clientX,y:t.clientY}; } }
+    }, {passive:false});
+    lookArea.addEventListener('touchmove', (e) => {
+      for(const t of e.touches){
+        if(t.identifier===lookId){
+          const dx=t.clientX-lookLast.x, dy=t.clientY-lookLast.y;
+          threeCamera.rotation.y -= dx*0.004;
+          threeCamera.rotation.x = Math.max(-1.2, Math.min(1.2, threeCamera.rotation.x - dy*0.004));
+          lookLast = {x:t.clientX,y:t.clientY};
+        }
+      }
+      e.preventDefault();
+    }, {passive:false});
+    lookArea.addEventListener('touchend', (e) => { for(const t of e.changedTouches){ if(t.identifier===lookId) lookId=null; } });
+
+    const joy = document.getElementById('fpJoystick'), knob = document.getElementById('fpJoystickKnob');
+    let joyId=null, joyCenter=null;
+    joy.addEventListener('touchstart', (e) => {
+      const t = e.changedTouches[0];
+      joyId = t.identifier;
+      const rect = joy.getBoundingClientRect();
+      joyCenter = {x:rect.left+rect.width/2, y:rect.top+rect.height/2};
+      e.preventDefault();
+    }, {passive:false});
+    joy.addEventListener('touchmove', (e) => {
+      for(const t of e.touches){
+        if(t.identifier===joyId){
+          let dx=t.clientX-joyCenter.x, dy=t.clientY-joyCenter.y;
+          const maxR=35, d=Math.hypot(dx,dy);
+          if(d>maxR){ dx=dx/d*maxR; dy=dy/d*maxR; }
+          knob.style.left=(30+dx)+'px'; knob.style.top=(30+dy)+'px';
+          fpJoystickVec = {x:dx/maxR, y:dy/maxR};
+        }
+      }
+      e.preventDefault();
+    }, {passive:false});
+    joy.addEventListener('touchend', (e) => {
+      for(const t of e.changedTouches){
+        if(t.identifier===joyId){ joyId=null; fpJoystickVec={x:0,y:0}; knob.style.left='30px'; knob.style.top='30px'; }
+      }
+    });
   }
   function resize3D(){
     const wrap = document.getElementById('plan3DWrap');
@@ -708,6 +849,32 @@
     threeRenderer.setSize(w,h,false);
     threeCamera.aspect = w/h;
     threeCamera.updateProjectionMatrix();
+  }
+  let floorTextureBase = null;
+  function getFloorTexture(repeatX, repeatY){
+    if(!floorTextureBase){
+      const c = document.createElement('canvas');
+      c.width = 256; c.height = 256;
+      const ctx = c.getContext('2d');
+      const plankH = 32;
+      for(let y=0; y<256; y+=plankH){
+        const shade = 118 + Math.floor(Math.random()*26);
+        ctx.fillStyle = 'rgb(' + (shade+42) + ',' + shade + ',' + (shade-32) + ')';
+        ctx.fillRect(0,y,256,plankH-2);
+        ctx.fillStyle = 'rgba(0,0,0,0.18)';
+        ctx.fillRect(0,y+plankH-2,256,2);
+        ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+        for(let i=0;i<5;i++){
+          const gy = y+3+Math.random()*(plankH-8);
+          ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(256,gy+(Math.random()*5-2.5)); ctx.stroke();
+        }
+      }
+      floorTextureBase = c;
+    }
+    const tex = new THREE.CanvasTexture(floorTextureBase);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(Math.max(1,repeatX), Math.max(1,repeatY));
+    return tex;
   }
   function wallSegmentsForEdge(ax,ay,bx,by,openings){
     const len = Math.hypot(bx-ax, by-ay) || 0.001;
@@ -731,34 +898,59 @@
     mesh.rotation.y = Math.atan2(-dy, dx);
     parent.add(mesh);
   }
+  function clear3DScene(){
+    const keep = [];
+    threeScene.children.forEach(c => {
+      if(c.isLight || c.type === 'GridHelper'){ keep.push(c); return; }
+      c.traverse(o => {
+        if(o.geometry) o.geometry.dispose();
+        if(o.material){ (Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose()); }
+      });
+    });
+    threeScene.children.length = 0;
+    keep.forEach(c => threeScene.add(c));
+  }
   function build3DScene(){
     ensureThree();
-    threeScene.children = threeScene.children.filter(c => c.isLight || c.type === 'GridHelper');
+    clear3DScene();
+    collisionSegs = [];
     let cx=0, cz=0, count=0;
     rooms.forEach(r => {
       const h = r.height || 2.7;
       const group = new THREE.Group();
-      group.position.set(r.x, 0, r.y);
+      group.position.set(r.x + r.len/2, 0, r.y + r.wid/2);
       group.rotation.y = -(r.rot||0)*Math.PI/180;
-      const pts = roomLocalPoints(r);
+      const pts = roomLocalPoints(r).map(p => ({x: p.x - r.len/2, y: p.y - r.wid/2}));
       const shape = new THREE.Shape(pts.map(p => new THREE.Vector2(p.x,p.y)));
-      const floorMesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshStandardMaterial({color:0x223244, side:THREE.DoubleSide}));
-      floorMesh.rotation.x = -Math.PI/2;
+      const floorTex = getFloorTexture(r.len/1.4, r.wid/1.4);
+      const floorMesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshStandardMaterial({map:floorTex, side:THREE.DoubleSide, roughness:0.85}));
+      floorMesh.rotation.x = Math.PI/2;
       floorMesh.position.y = 0.01;
       group.add(floorMesh);
+      const wColor = r.wallColor || '#5eead4';
       for(let i=0;i<pts.length;i++){
         const a=pts[i], b=pts[(i+1)%pts.length];
         const wo = (r.openings||[]).filter(o=>o.wallIndex===i);
-        wallSegmentsForEdge(a.x,a.y,b.x,b.y,wo).forEach(s => addWallBox(group, s.mx,s.my,s.segLen,s.dx,s.dy,h,0.12,0x5eead4));
+        wallSegmentsForEdge(a.x,a.y,b.x,b.y,wo).forEach(s => {
+          addWallBox(group, s.mx,s.my,s.segLen,s.dx,s.dy,h,0.12,wColor);
+          const ep = segEndpoints(s.mx,s.my,s.dx,s.dy,s.segLen);
+          const p1 = localToWorldRoom(ep.x1,ep.y1,r), p2 = localToWorldRoom(ep.x2,ep.y2,r);
+          collisionSegs.push({x1:p1.x,z1:p1.z,x2:p2.x,z2:p2.z});
+        });
       }
       threeScene.add(group);
       cx += r.x+r.len/2; cz += r.y+r.wid/2; count++;
     });
     walls.forEach(w => {
-      wallSegmentsForEdge(w.x1,w.y1,w.x2,w.y2,[]).forEach(s => addWallBox(threeScene, s.mx,s.my,s.segLen,s.dx,s.dy,2.5,0.12,0xc7d2db));
+      wallSegmentsForEdge(w.x1,w.y1,w.x2,w.y2,[]).forEach(s => {
+        addWallBox(threeScene, s.mx,s.my,s.segLen,s.dx,s.dy,2.5,0.12,0xc7d2db);
+        const ep = segEndpoints(s.mx,s.my,s.dx,s.dy,s.segLen);
+        collisionSegs.push({x1:ep.x1,z1:ep.y1,x2:ep.x2,z2:ep.y2});
+      });
       cx += (w.x1+w.x2)/2; cz += (w.y1+w.y2)/2; count++;
     });
     const tx = count ? cx/count : 3, tz = count ? cz/count : 3;
+    sceneCenter = {x:tx, z:tz};
     threeCamera.position.set(tx+8, 9, tz+8);
     threeControls.target.set(tx, 1, tz);
     threeControls.update();
@@ -770,6 +962,8 @@
     document.getElementById('planWrap').style.display = view3D ? 'none' : 'block';
     document.getElementById('plan3DWrap').style.display = view3D ? 'block' : 'none';
     document.getElementById('hint3D').style.display = view3D ? 'block' : 'none';
+    document.getElementById('fpRow').style.display = view3D ? 'flex' : 'none';
+    if(!view3D && fpMode) exitFirstPerson();
     document.getElementById('toggle3DBtn').textContent = view3D ? 'Voltar para 2D' : 'Ver em 3D';
     if(view3D) build3DScene();
   });
@@ -1118,7 +1312,7 @@
       const cx = px+pw/2, cy = py+ph/2;
       const rad = (r.rot||0) * Math.PI/180;
       pctx.fillStyle = 'rgba(94,234,212,0.12)';
-      pctx.strokeStyle = '#5eead4';
+      pctx.strokeStyle = r.wallColor || '#5eead4';
       pctx.lineWidth = (r.id === selectedRoomId) ? 4 : 2.5;
       pctx.save();
       pctx.translate(cx,cy); pctx.rotate(rad); pctx.translate(-cx,-cy);

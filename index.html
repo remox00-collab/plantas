@@ -1274,6 +1274,202 @@
     alert('Paredes fechadas! Viraram um cômodo — agora dá pra arrastar, girar e renomear ele igual aos outros.');
   }
 
+  // ===== Fechar área usando paredes manuais + paredes de cômodos existentes =====
+  function roomWorldPoly(r){
+    return roomLocalPoints(r).map(p => { const q = localToWorldRoom(p.x - r.len/2, p.y - r.wid/2, r); return {x:q.x, y:q.z}; });
+  }
+  function pointInPoly(pt, poly){
+    let ins = false;
+    for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+      const a = poly[i], b = poly[j];
+      if(((a.y>pt.y)!==(b.y>pt.y)) && (pt.x < (b.x-a.x)*(pt.y-a.y)/(b.y-a.y)+a.x)) ins = !ins;
+    }
+    return ins;
+  }
+  function interiorPoint(poly){
+    let minY=1e9, maxY=-1e9;
+    poly.forEach(p => { minY=Math.min(minY,p.y); maxY=Math.max(maxY,p.y); });
+    let best = null, bestW = -1;
+    [0.5,0.37,0.63,0.25,0.75,0.12,0.88].forEach(f => {
+      const y = minY + (maxY-minY)*f;
+      const xs = [];
+      for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+        const a = poly[i], b = poly[j];
+        if((a.y>y)!==(b.y>y)) xs.push((b.x-a.x)*(y-a.y)/(b.y-a.y)+a.x);
+      }
+      xs.sort((u,v)=>u-v);
+      for(let k=0;k+1<xs.length;k+=2){ const w = xs[k+1]-xs[k]; if(w > bestW){ bestW = w; best = {x:(xs[k]+xs[k+1])/2, y}; } }
+    });
+    return best;
+  }
+  function findClosedFaces(){
+    const TOL = 0.2;
+    const segs = [];
+    walls.forEach(w => segs.push({ax:w.x1, ay:w.y1, bx:w.x2, by:w.y2, manual:true, id:w.id, splits:[]}));
+    rooms.forEach(r => roomEdgesWorld(r).forEach(e => segs.push({ax:e.ax, ay:e.ay, bx:e.bx, by:e.by, manual:false, id:null, splits:[]})));
+    const nSeg = segs.length;
+    // 1) pontas das paredes manuais: gruda em pontas próximas e, senão, no meio de outra parede próxima
+    segs.forEach((sg, si) => {
+      if(!sg.manual) return;
+      ['a','b'].forEach(end => {
+        const px = sg[end+'x'], py = sg[end+'y'];
+        let best = null, bd = TOL;
+        segs.forEach((o, oi) => {
+          if(oi === si) return;
+          [[o.ax,o.ay],[o.bx,o.by]].forEach(([qx,qy]) => { const d = Math.hypot(px-qx, py-qy); if(d < bd){ bd = d; best = {x:qx,y:qy}; } });
+        });
+        if(best){ sg[end+'x'] = best.x; sg[end+'y'] = best.y; return; }
+        let bi = -1; bd = TOL;
+        segs.forEach((o, oi) => {
+          if(oi === si) return;
+          const dx = o.bx-o.ax, dy = o.by-o.ay, l2 = dx*dx+dy*dy; if(l2 < 1e-9) return;
+          const t = ((px-o.ax)*dx + (py-o.ay)*dy)/l2;
+          const L = Math.sqrt(l2);
+          if(t*L < 0.05 || (1-t)*L < 0.05) return;
+          const qx = o.ax+t*dx, qy = o.ay+t*dy, d = Math.hypot(px-qx, py-qy);
+          if(d < bd){ bd = d; best = {x:qx,y:qy}; bi = oi; }
+        });
+        if(bi >= 0){ sg[end+'x'] = best.x; sg[end+'y'] = best.y; segs[bi].splits.push({x:best.x, y:best.y}); }
+      });
+    });
+    // 2) cantos de cômodos perto do meio de uma parede manual
+    segs.forEach((sg, si) => {
+      if(sg.manual) return;
+      [[sg.ax,sg.ay],[sg.bx,sg.by]].forEach(([px,py]) => {
+        segs.forEach(o => {
+          if(!o.manual) return;
+          const dx = o.bx-o.ax, dy = o.by-o.ay, l2 = dx*dx+dy*dy; if(l2 < 1e-9) return;
+          const t = ((px-o.ax)*dx + (py-o.ay)*dy)/l2, L = Math.sqrt(l2);
+          if(t*L < 0.05 || (1-t)*L < 0.05) return;
+          const d = Math.hypot(px-(o.ax+t*dx), py-(o.ay+t*dy));
+          if(d < TOL) o.splits.push({x:px, y:py});
+        });
+      });
+    });
+    // 3) cruzamentos de verdade
+    for(let i=0;i<nSeg;i++) for(let j=i+1;j<nSeg;j++){
+      const a = segs[i], b = segs[j];
+      if(!a.manual && !b.manual) continue; // cômodo x cômodo não interessa
+      const rx=a.bx-a.ax, ry=a.by-a.ay, sx=b.bx-b.ax, sy=b.by-b.ay;
+      const den = rx*sy-ry*sx; if(Math.abs(den) < 1e-9) continue;
+      const t = ((b.ax-a.ax)*sy-(b.ay-a.ay)*sx)/den, u = ((b.ax-a.ax)*ry-(b.ay-a.ay)*rx)/den;
+      const eps = 1e-4;
+      if(t>eps && t<1-eps && u>eps && u<1-eps){
+        const pt = {x:a.ax+t*rx, y:a.ay+t*ry};
+        a.splits.push(pt); b.splits.push(pt);
+      }
+    }
+    // 4) grafo
+    const nodeIdx = new Map(), nodes = [];
+    const nodeOf = (x,y) => { const k = x.toFixed(3)+','+y.toFixed(3); if(!nodeIdx.has(k)){ nodeIdx.set(k, nodes.length); nodes.push({x,y,out:[]}); } return nodeIdx.get(k); };
+    const edgeMap = new Map(), edges = [];
+    segs.forEach(sg => {
+      const dx = sg.bx-sg.ax, dy = sg.by-sg.ay, L2 = dx*dx+dy*dy; if(L2 < 1e-9) return;
+      const pts = [{t:0,x:sg.ax,y:sg.ay}, {t:1,x:sg.bx,y:sg.by}];
+      sg.splits.forEach(p => pts.push({t:((p.x-sg.ax)*dx+(p.y-sg.ay)*dy)/L2, x:p.x, y:p.y}));
+      pts.sort((p,q)=>p.t-q.t);
+      for(let k=0;k+1<pts.length;k++){
+        const u = nodeOf(pts[k].x,pts[k].y), v = nodeOf(pts[k+1].x,pts[k+1].y);
+        if(u === v) continue;
+        const key = Math.min(u,v)+'_'+Math.max(u,v);
+        let e = edgeMap.get(key);
+        if(!e){ e = {u, v, key, mids:new Set(), manual:false}; edgeMap.set(key, e); edges.push(e); }
+        if(sg.manual){ e.manual = true; e.mids.add(sg.id); }
+      }
+    });
+    // 5) tira pontas soltas
+    const alive = new Set(edges);
+    const deg = nodes.map(()=>0);
+    edges.forEach(e => { deg[e.u]++; deg[e.v]++; });
+    let again = true;
+    while(again){
+      again = false;
+      alive.forEach(e => {
+        if(deg[e.u] < 2 || deg[e.v] < 2){ alive.delete(e); deg[e.u]--; deg[e.v]--; again = true; }
+      });
+    }
+    // 6) meias-arestas e faces
+    const hes = [];
+    alive.forEach(e => {
+      const h1 = {from:e.u, to:e.v, e, next:null, used:false}, h2 = {from:e.v, to:e.u, e, next:null, used:false};
+      h1.twin = h2; h2.twin = h1; hes.push(h1,h2);
+      nodes[e.u].out.push(h1); nodes[e.v].out.push(h2);
+    });
+    nodes.forEach(n => n.out.forEach(h => { h.ang = Math.atan2(nodes[h.to].y-n.y, nodes[h.to].x-n.x); }));
+    nodes.forEach(n => n.out.sort((a,b)=>a.ang-b.ang));
+    hes.forEach(h => {
+      const outs = nodes[h.to].out;
+      const idx = outs.indexOf(h.twin);
+      h.next = outs[(idx-1+outs.length)%outs.length];
+    });
+    const faces = [];
+    hes.forEach(h0 => {
+      if(h0.used) return;
+      const loop = []; let h = h0, guard = 0;
+      while(!h.used && guard++ < 5000){ h.used = true; loop.push(h); h = h.next; }
+      if(h !== h0) return;
+      let area = 0;
+      loop.forEach(x => { const a = nodes[x.from], b = nodes[x.to]; area += a.x*b.y - b.x*a.y; });
+      area /= 2;
+      if(area > 0.8){ // sinal positivo = face interna (testado)
+        const ids = loop.map(x => x.from);
+        if(new Set(ids).size !== ids.length) return;
+        faces.push({pts: ids.map(i => ({x:nodes[i].x, y:nodes[i].y})), edges: loop.map(x => x.e), area});
+      }
+    });
+    return {faces, edges};
+  }
+  function tryCloseWithRooms(){
+    if(!walls.length) return;
+    const {faces} = findClosedFaces();
+    const roomPolys = rooms.map(r => { const poly = roomWorldPoly(r); return {poly, pt: interiorPoint(poly)}; });
+    const accepted = [];
+    faces.forEach(f => {
+      if(!f.edges.some(e => e.manual)) return;
+      const ip = interiorPoint(f.pts); if(!ip) return;
+      if(roomPolys.some(rp => pointInPoly(ip, rp.poly))) return;       // já é parte de um cômodo
+      if(roomPolys.some(rp => rp.pt && pointInPoly(rp.pt, f.pts))) return; // engoliria um cômodo
+      let pts = f.pts.slice();
+      let changed = true;
+      while(changed && pts.length > 3){
+        changed = false;
+        for(let i=0;i<pts.length;i++){
+          const a = pts[(i-1+pts.length)%pts.length], b = pts[i], c = pts[(i+1)%pts.length];
+          const a1 = Math.atan2(b.y-a.y, b.x-a.x), a2 = Math.atan2(c.y-b.y, c.x-b.x);
+          let d = Math.abs(a2-a1); if(d > Math.PI) d = 2*Math.PI-d;
+          if(d < 0.03){ pts.splice(i,1); changed = true; break; }
+        }
+      }
+      if(pts.length < 3) return;
+      accepted.push({pts, edges:f.edges});
+    });
+    if(!accepted.length) return;
+    // quais paredes manuais foram totalmente usadas
+    const total = new Map(), used = new Map();
+    const all = findClosedFaces().edges;
+    all.forEach(e => e.mids.forEach(id => total.set(id, (total.get(id)||0)+1)));
+    const usedKeys = new Set();
+    accepted.forEach(a => a.edges.forEach(e => { if(!usedKeys.has(e.key)){ usedKeys.add(e.key); e.mids.forEach(id => used.set(id, (used.get(id)||0)+1)); } }));
+    const base = Date.now();
+    accepted.forEach((a,i) => {
+      const xs = a.pts.map(v=>v.x), ys = a.pts.map(v=>v.y);
+      const minX = Math.min(...xs), minY = Math.min(...ys);
+      rooms.push({
+        id: base+i, name: 'Cômodo ' + (rooms.length+1), height: null,
+        len: +(Math.max(...xs)-minX).toFixed(2), wid: +(Math.max(...ys)-minY).toFixed(2),
+        polygon: a.pts.map(v => ({x:+(v.x-minX).toFixed(3), y:+(v.y-minY).toFixed(3)})),
+        rot: 0, openings: [], locked: false, x: +minX.toFixed(3), y: +minY.toFixed(3)
+      });
+    });
+    walls = walls.filter(w => !(used.get(w.id) && used.get(w.id) >= (total.get(w.id)||1)));
+    selectedManualWallId = null; hideManualWallEditor();
+    saveRooms(); saveWalls(); renderRoomList(); renderPlan();
+    alert(accepted.length === 1
+      ? 'Área fechada! O espaço entre as paredes virou um cômodo (com as medidas que sobraram). Dá pra arrastar, girar e renomear igual aos outros.'
+      : accepted.length + ' áreas fechadas! Viraram cômodos, com as medidas que sobraram.');
+  }
+  function tryCloseAll(){ tryCloseLoop(); tryCloseWithRooms(); }
+
   function wallHitTestScreen(x,y){
     const eff = SCALE*zoom;
     for(let i=walls.length-1; i>=0; i--){
@@ -1300,7 +1496,7 @@
     const curLen = Math.hypot(w.x2-w.x1, w.y2-w.y1) || 1;
     const ux = (w.x2-w.x1)/curLen, uy = (w.y2-w.y1)/curLen;
     w.x2 = w.x1 + ux*newLen; w.y2 = w.y1 + uy*newLen;
-    saveWalls(); tryCloseLoop(); renderPlan();
+    saveWalls(); tryCloseAll(); renderPlan();
     if(walls.find(x=>x.id===w.id)) showManualWallEditor(w);
   });
   document.getElementById('closeManualWallEditor').addEventListener('click', () => {
@@ -1777,7 +1973,7 @@
     if(len > 0.05){
       walls.push({id:Date.now(), x1:wallDrawStart.x, y1:wallDrawStart.y, x2:snapped.x, y2:snapped.y});
       saveWalls();
-      tryCloseLoop();
+      tryCloseAll();
     }
     wallDrawStart = null; wallPreview = null; wallTouchPending = false;
   }
@@ -2009,7 +2205,7 @@
     }
     if(pivotDrag){
       pivotDrag = null; pivotSnap = null;
-      saveWalls(); tryCloseLoop(); renderPlan();
+      saveWalls(); tryCloseAll(); renderPlan();
       return;
     }
     if(draggingWall){
@@ -2028,7 +2224,7 @@
         if(best){ w[xk]=best.x; w[yk]=best.y; }
       });
       draggingWall = null;
-      saveWalls(); tryCloseLoop(); renderPlan();
+      saveWalls(); tryCloseAll(); renderPlan();
       return;
     }
     if(draggingOpening){ draggingOpening = null; saveRooms(); return; }
@@ -2360,7 +2556,7 @@
     });
     strokes = strokes.filter(x => x !== st);
     saveDraw(); saveWalls();
-    tryCloseLoop();
+    tryCloseAll();
     renderPlan();
     return true;
   }

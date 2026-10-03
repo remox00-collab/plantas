@@ -78,17 +78,22 @@
   .drawer.open{transform:none; box-shadow:0 0 24px rgba(0,0,0,.5);}
   .drawerBody{height:100%; overflow-y:auto; padding:48px 12px 24px; -webkit-overflow-scrolling:touch;}
   .drawerBody > .card{margin-bottom:12px;}
-  .drawerTab{position:absolute; top:35%; writing-mode:vertical-rl; padding:16px 9px; background:var(--accent); color:#0b1620; font-weight:600; border:none; box-shadow:0 2px 10px rgba(0,0,0,.4);}
+  .drawerTab{position:absolute; top:35%; z-index:40; touch-action:manipulation; pointer-events:auto; writing-mode:vertical-rl; padding:16px 9px; background:var(--accent); color:#0b1620; font-weight:600; border:none; box-shadow:0 2px 10px rgba(0,0,0,.4);}
   .drawer.left .drawerTab{left:100%; border-radius:0 10px 10px 0;}
   .drawer.right .drawerTab{right:100%; border-radius:10px 0 0 10px;}
   #fsBtn{position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:30; padding:7px 12px; font-size:13px; background:rgba(28,39,53,.85);}
-  #stage.fp .drawerTab, #stage.fp #fsBtn{display:none;}
+  #stage.fp #fsBtn{display:none;}
   #fpOverlay{display:none; position:absolute; inset:0;}
   #fpLookArea{position:absolute; inset:0;}
   #fpJoystick,#fpLook{position:absolute; bottom:16px; width:100px; height:100px; border-radius:50%; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.22); touch-action:none;}
   #fpJoystick{left:16px;} #fpLook{right:16px;}
   #fpJoystickKnob,#fpLookKnob{position:absolute; left:30px; top:30px; width:40px; height:40px; border-radius:50%; background:rgba(255,255,255,0.28);}
   #fpExitBtn{position:absolute; top:10px; right:10px;}
+  #sunPanel{position:absolute; top:50px; left:50%; transform:translateX(-50%); width:min(440px, calc(100% - 110px)); z-index:6; display:flex; align-items:center; gap:8px; padding:6px 12px; background:rgba(20,28,40,.78); border:1px solid rgba(255,255,255,.18); border-radius:22px; backdrop-filter:blur(4px);}
+  #sunPanel button{padding:4px 10px; font-size:14px; border-radius:14px;}
+  #sunPanel input[type=range]{flex:1; min-width:0; height:28px; accent-color:var(--accent);}
+  #sunIcon{font-size:18px;}
+  #sunLabel{font-size:13px; min-width:42px; text-align:right;}
   #planCanvas{display:block; touch-action:none;}
   .empty{color:var(--muted); font-size:13px; text-align:center; padding:20px 0;}
   .step{color:var(--accent); font-size:12px; font-weight:600; margin-bottom:8px;}
@@ -147,6 +152,7 @@
       <div><label>Altura (m)</label><input id="roomHeight" inputmode="decimal" placeholder="2.70"></div>
       <div><label>Comprimento (m)</label><input id="roomLen" inputmode="decimal" placeholder="4.00"></div>
       <div><label>Largura (m)</label><input id="roomWid" inputmode="decimal" placeholder="3.00"></div>
+      <div style="grid-column:1 / -1;"><label style="display:flex;align-items:center;gap:8px;font-size:14px;color:var(--text);margin:0;"><input type="checkbox" id="roomNoCeiling" style="width:auto;"> Sem teto (área externa)</label></div>
     </div>
     <div class="row" style="margin-top:12px;">
       <button class="primary" id="addRoomBtn">Adicionar cômodo à planta</button>
@@ -199,6 +205,12 @@
         <div id="fpLook"><div id="fpLookKnob"></div></div>
         <button id="fpExitBtn">Sair</button>
       </div>
+      <div id="sunPanel">
+        <button id="sunPlay" title="Passar o dia sozinho">▶</button>
+        <span id="sunIcon">☀️</span>
+        <input type="range" id="sunSlider" min="0" max="24" step="0.05" value="12" aria-label="Hora do dia">
+        <span id="sunLabel" class="mono">12:00</span>
+      </div>
     </div>
       <aside id="drawerLeft" class="drawer left">
         <button id="tabLeft" class="drawerTab" title="Mostrar/esconder ferramentas">⚙️ Ferramentas</button>
@@ -215,7 +227,7 @@
       <button id="fitBtn" title="Ajusta o zoom pra planta caber na tela">⤢ Ajustar à tela</button>
       <button class="primary" id="toggle3DBtn">Ver em 3D</button>
     </div>
-    <p class="hint" id="hint3D" style="display:none;">Arraste pra girar a câmera, roda do mouse (ou pinça no celular) pra dar zoom. Isso é só visualização — pra editar, volte ao 2D.</p>
+    <p class="hint" id="hint3D" style="display:none;">Arraste pra girar a câmera, roda do mouse (ou pinça no celular) pra dar zoom. Isso é só visualização — pra editar, volte ao 2D. Use a barra de cima pra mudar a hora do dia: o sol, a lua, as sombras e a luz dentro da casa acompanham.</p>
     <div class="row" id="fpRow" style="display:none; margin-top:8px;">
       <button class="primary" id="fpEnterBtn">🚶 Modo primeira pessoa</button>
     </div>
@@ -695,6 +707,7 @@
       rot: 0,
       openings: [],
       locked: false,
+      noCeiling: document.getElementById('roomNoCeiling').checked,
       x: 0.3 + (rooms.length % 3) * 0.3, y: 0.3 + Math.floor(rooms.length/3) * 0.3
     });
     saveRooms();
@@ -706,6 +719,7 @@
     document.getElementById('roomHeight').value = '';
     document.getElementById('roomLen').value = '';
     document.getElementById('roomWid').value = '';
+    document.getElementById('roomNoCeiling').checked = false;
     pendingCorners = [];
     pendingARPolygon = null;
     renderCorners();
@@ -728,6 +742,7 @@
             <div><label>Largura (m)</label><input id="editWid" inputmode="decimal" value="${r.wid}"></div>
             <div><label>Altura (m)</label><input id="editHeight" inputmode="decimal" value="${r.height||''}"></div>
             <div><label>Ângulo (°)</label><input id="editRot" inputmode="decimal" value="${r.rot||0}"></div>
+            <div style="grid-column:1 / -1;"><label style="display:flex;align-items:center;gap:8px;font-size:14px;color:var(--text);margin:0;"><input type="checkbox" id="editNoCeiling" style="width:auto;"${r.noCeiling ? ' checked' : ''}> Sem teto (área externa)</label></div>
           </div>
           <div class="row" style="margin-top:8px;">
             <button class="primary" id="saveEdit">Salvar</button>
@@ -746,6 +761,7 @@
           if(len>0) r.len = len;
           if(wid>0) r.wid = wid;
           r.height = height||null;
+          r.noCeiling = document.getElementById('editNoCeiling').checked;
           r.rot = isNaN(rot) ? 0 : ((rot%360)+360)%360;
           if(dimsChanged) r.polygon = null; // só volta pra retângulo se as medidas mudaram; trocar nome/altura/ângulo mantém a forma
           editingRoomId = null;
@@ -758,7 +774,7 @@
         return;
       }
       div.innerHTML = `<div><div class="name" style="cursor:pointer;" title="Toque pra localizar na planta">${r.locked ? '🔒 ' : ''}${escapeHtml(r.name)}</div>
-        <div class="dims mono">${r.len} × ${r.wid} m${r.height ? ' · pé-direito ' + r.height + 'm' : ''}${r.polygon ? ' · forma real (' + r.polygon.length + ' cantos)' : ''}${r.rot ? ' · ' + r.rot + '°' : ''}</div></div>`;
+        <div class="dims mono">${r.len} × ${r.wid} m${r.height ? ' · pé-direito ' + r.height + 'm' : ''}${r.noCeiling ? ' · sem teto' : ''}${r.polygon ? ' · forma real (' + r.polygon.length + ' cantos)' : ''}${r.rot ? ' · ' + r.rot + '°' : ''}</div></div>`;
       div.querySelector('.name').addEventListener('click', () => focusRoomInPlan(r));
       const btnRow = document.createElement('div');
       btnRow.className = 'row';
@@ -777,6 +793,9 @@
         if(r.locked && selectedRoomId === r.id){ selectedRoomId = null; selectedWallIndex = null; hideWallEditor(); }
         saveRooms(); renderRoomList(); renderPlan();
       });
+      const ceilBtn = document.createElement('button'); ceilBtn.textContent = r.noCeiling ? '🏠 Pôr teto' : '☀️ Sem teto';
+      ceilBtn.title = r.noCeiling ? 'Este cômodo está sem teto (área externa). Toque pra colocar teto' : 'Tirar o teto deste cômodo (área externa) na primeira pessoa';
+      ceilBtn.addEventListener('click', () => { r.noCeiling = !r.noCeiling; saveRooms(); renderRoomList(); });
       const rotL = document.createElement('button'); rotL.textContent = '⟲90°'; rotL.title = 'Girar cômodo';
       rotL.addEventListener('click', () => { r.rot = ((r.rot||0) - 90 + 360) % 360; saveRooms(); renderPlan(); renderRoomList(); });
       const rotR = document.createElement('button'); rotR.textContent = '⟳90°'; rotR.title = 'Girar cômodo';
@@ -788,7 +807,7 @@
         rooms = rooms.filter(x => x.id !== r.id);
         saveRooms(); renderRoomList(); renderPlan();
       });
-      btnRow.append(colorInput, lockBtn, rotL, rotR, editBtn, del);
+      btnRow.append(colorInput, lockBtn, ceilBtn, rotL, rotR, editBtn, del);
       div.appendChild(btnRow);
       el.appendChild(div);
     });
@@ -843,6 +862,191 @@
   let view3D = false, threeScene=null, threeCamera=null, threeRenderer=null, threeControls=null;
   let fpMode=false, fpControls=null, fpKeys={}, fpJoystickVec={x:0,y:0}, fpLookVec={x:0,y:0}, sceneCenter={x:3,z:3};
   let collisionSegs = [];
+  let ceilingMeshes = [];
+  // Na visão geral o teto fica invisível, mas continua bloqueando o sol (só entra luz por portas/janelas e áreas sem teto).
+  // Na primeira pessoa ele aparece de verdade.
+  function applyCeiling(){ ceilingMeshes.forEach(m => { const on = fpMode; m.material.colorWrite = on; m.material.depthWrite = on; m.receiveShadow = on; }); }
+
+  // ===== Céu: sol, lua, estrelas, nuvens, grama e sombras =====
+  let sky = null, skyHour = 12, skyPlaying = false, skyLastT = 0;
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+  const smooth = (a,b,x) => { const t = clamp01((x-a)/(b-a)); return t*t*(3-2*t); };
+  const mixN = (a,b,t) => a + (b-a)*t;
+  function getGrassTexture(repeatX, repeatY){
+    if(!getGrassTexture.base){
+      const c = document.createElement('canvas'); c.width = 256; c.height = 256;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = 'rgb(74,128,52)'; ctx.fillRect(0,0,256,256);
+      for(let i=0;i<2600;i++){
+        const g = 90 + Math.floor(Math.random()*90), x = Math.random()*256, y = Math.random()*256;
+        ctx.strokeStyle = 'rgba(' + Math.floor(g*0.45) + ',' + g + ',' + Math.floor(g*0.3) + ',0.55)';
+        ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x + Math.random()*4-2, y - 3 - Math.random()*5); ctx.stroke();
+      }
+      getGrassTexture.base = c;
+    }
+    const tex = new THREE.CanvasTexture(getGrassTexture.base);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(Math.max(1,repeatX), Math.max(1,repeatY));
+    return tex;
+  }
+  function makeMoonTexture(){
+    const c = document.createElement('canvas'); c.width = 128; c.height = 128;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#ecebe0'; ctx.fillRect(0,0,128,128);
+    for(let i=0;i<16;i++){
+      const r = 4 + Math.random()*14;
+      ctx.fillStyle = 'rgba(150,150,140,' + (0.12 + Math.random()*0.18) + ')';
+      ctx.beginPath(); ctx.arc(Math.random()*128, Math.random()*128, r, 0, Math.PI*2); ctx.fill();
+    }
+    return new THREE.CanvasTexture(c);
+  }
+  function keepObj(o){ o.userData.keep = true; threeScene.add(o); return o; }
+  function initSky(){
+    threeRenderer.shadowMap.enabled = true;
+    threeRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    const coarse = window.matchMedia('(pointer: coarse)').matches;
+    sky = {};
+    threeScene.fog = new THREE.Fog(0x7ec8ff, 100, 360);
+    sky.hemi = keepObj(new THREE.HemisphereLight(0xbfdcff, 0x4a5a3a, 0.6));
+    sky.light = keepObj(new THREE.DirectionalLight(0xfff1d6, 1));   // é o sol de dia e a lua de noite
+    sky.light.castShadow = true;
+    sky.light.shadow.mapSize.set(coarse ? 1024 : 2048, coarse ? 1024 : 2048);
+    sky.light.shadow.bias = -0.0008;
+    sky.light.shadow.normalBias = 0.03;
+    sky.light.shadow.camera.near = 1; sky.light.shadow.camera.far = 260;
+    sky.target = keepObj(new THREE.Object3D());
+    sky.light.target = sky.target;
+    // chão de grama em volta de tudo
+    const groundTex = getGrassTexture(230, 230);
+    sky.ground = keepObj(new THREE.Mesh(new THREE.PlaneGeometry(700,700), new THREE.MeshStandardMaterial({map:groundTex, roughness:1})));
+    sky.ground.rotation.x = -Math.PI/2; sky.ground.position.y = -0.02; sky.ground.receiveShadow = true;
+    // sol e lua
+    sky.sunDisc = keepObj(new THREE.Mesh(new THREE.SphereGeometry(7,16,12), new THREE.MeshBasicMaterial({color:0xfff0b0, fog:false})));
+    sky.sunHalo = keepObj(new THREE.Mesh(new THREE.SphereGeometry(15,16,12), new THREE.MeshBasicMaterial({color:0xffd27a, transparent:true, opacity:0.22, depthWrite:false, fog:false})));
+    sky.moonDisc = keepObj(new THREE.Mesh(new THREE.SphereGeometry(6,20,14), new THREE.MeshBasicMaterial({map:makeMoonTexture(), fog:false})));
+    sky.moonHalo = keepObj(new THREE.Mesh(new THREE.SphereGeometry(12,16,12), new THREE.MeshBasicMaterial({color:0xaec4ff, transparent:true, opacity:0.16, depthWrite:false, fog:false})));
+    // estrelas
+    const N = 1800, pos = new Float32Array(N*3);
+    for(let i=0;i<N;i++){
+      const u = Math.random()*2-1, th = Math.random()*Math.PI*2, rr = Math.sqrt(1-u*u);
+      pos[i*3] = Math.cos(th)*rr*190; pos[i*3+1] = u*190; pos[i*3+2] = Math.sin(th)*rr*190;
+    }
+    const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(pos,3));
+    sky.starMat = new THREE.PointsMaterial({color:0xffffff, size:1.7, sizeAttenuation:false, transparent:true, opacity:0, depthWrite:false, fog:false});
+    sky.stars = keepObj(new THREE.Points(sg, sky.starMat)); sky.stars.frustumCulled = false;
+    // estrela cadente
+    sky.shootMat = new THREE.LineBasicMaterial({color:0xffffff, transparent:true, opacity:0, fog:false});
+    sky.shoot = keepObj(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-16)]), sky.shootMat));
+    sky.shoot.frustumCulled = false; sky.shootT = -1; sky.shootNext = 4; sky.shootDir = new THREE.Vector3(1,-0.3,0);
+    // nuvens
+    sky.cloudMat = new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.9, depthWrite:false, fog:false});
+    sky.clouds = keepObj(new THREE.Group()); sky.cloudList = [];
+    const puffGeo = new THREE.SphereGeometry(1, 9, 7);
+    for(let i=0;i<16;i++){
+      const g = new THREE.Group(), n = 4 + Math.floor(Math.random()*3), base = 7 + Math.random()*7;
+      for(let k=0;k<n;k++){
+        const m = new THREE.Mesh(puffGeo, sky.cloudMat), sc = base*(0.6 + Math.random()*0.6);
+        m.scale.set(sc*1.5, sc*0.55, sc*0.9);
+        m.position.set((k-n/2)*base*0.9, Math.random()*2, Math.random()*base*0.6);
+        g.add(m);
+      }
+      g.position.set(Math.random()*400-200, 48 + Math.random()*30, Math.random()*400-200);
+      g.userData.speed = 0.8 + Math.random()*1.4;
+      sky.clouds.add(g); sky.cloudList.push(g);
+    }
+    window.__sky = () => sky;
+    updateSky();
+  }
+  function fmtHour(h){ const hh = Math.floor(h) % 24, mm = Math.floor((h - Math.floor(h))*60); return String(hh).padStart(2,'0') + ':' + String(mm).padStart(2,'0'); }
+  function updateSky(){
+    if(!sky) return;
+    const h = skyHour, a = (h-6)*Math.PI/12, sinA = Math.sin(a), cosA = Math.cos(a);
+    // direção do sol: nasce a leste (+x), passa ao norte da planta (topo = norte, como no Brasil) e se põe a oeste
+    const L = Math.hypot(cosA, sinA, 0.35), dx = cosA/L, dy = sinA/L, dz = -0.35/L;
+    const cx = sceneCenter.x, cz = sceneCenter.z;
+    const dayF = smooth(-0.12, 0.3, sinA);          // 0 = noite, 1 = dia
+    const nightF = 1 - smooth(-0.2, 0.08, sinA);    // 1 = noite fechada
+    const twi = Math.exp(-Math.pow(sinA/0.2, 2));   // pico no nascer/pôr do sol
+    // luz principal: sol de dia, lua de noite (a troca acontece quando a intensidade é zero)
+    const sunUp = sinA >= 0;
+    const sgn = sunUp ? 1 : -1;
+    sky.light.position.set(cx + dx*sgn*90, Math.max(dy*sgn*90, 4), cz + dz*sgn*90);
+    sky.target.position.set(cx, 0, cz);
+    if(sunUp){
+      const warm = smooth(0, 0.45, sinA);
+      sky.light.color.setRGB(mixN(1.0,1.0,warm), mixN(0.58,0.95,warm), mixN(0.30,0.84,warm));
+      sky.light.intensity = 1.15 * smooth(0, 0.25, sinA);
+    }else{
+      sky.light.color.setRGB(0.62, 0.72, 1.0);
+      sky.light.intensity = 0.34 * smooth(0, 0.3, -sinA);
+    }
+    // luz ambiente e cor do céu
+    sky.hemi.intensity = 0.3 + 0.34*dayF;
+    sky.hemi.color.setRGB(mixN(0.12,0.75,dayF), mixN(0.17,0.86,dayF), mixN(0.33,1.0,dayF));
+    sky.hemi.groundColor.setRGB(mixN(0.04,0.29,dayF), mixN(0.06,0.35,dayF), mixN(0.04,0.23,dayF));
+    let r = mixN(0.02,0.49,dayF), g = mixN(0.04,0.78,dayF), b = mixN(0.11,1.0,dayF);
+    const tw = twi*0.55*(0.35 + 0.65*(1-nightF));
+    r = mixN(r,1.0,tw); g = mixN(g,0.54,tw); b = mixN(b,0.30,tw);
+    if(!threeScene.background || !threeScene.background.setRGB) threeScene.background = new THREE.Color();
+    threeScene.background.setRGB(r,g,b); threeScene.fog.color.setRGB(r,g,b);
+    // discos
+    const D = 175;
+    sky.sunDisc.position.set(cx + dx*D, dy*D, cz + dz*D); sky.sunHalo.position.copy(sky.sunDisc.position);
+    sky.sunDisc.visible = sky.sunHalo.visible = sinA > -0.08;
+    sky.sunDisc.material.color.setRGB(1, mixN(0.55,0.95,smooth(0,0.4,sinA)), mixN(0.25,0.7,smooth(0,0.4,sinA)));
+    sky.moonDisc.position.set(cx - dx*D, -dy*D, cz - dz*D); sky.moonHalo.position.copy(sky.moonDisc.position);
+    sky.moonDisc.visible = sky.moonHalo.visible = -sinA > -0.08;
+    sky.moonHalo.material.opacity = 0.16*(1-dayF);
+    sky.moonDisc.lookAt(cx, 0, cz);
+    // estrelas, nuvens
+    sky.stars.position.set(cx, 0, cz); sky.stars.rotation.z = h*Math.PI/12*0.5;
+    sky.starMat.opacity = nightF;
+    sky.clouds.position.set(cx, 0, cz);
+    sky.cloudMat.color.setRGB(mixN(0.22,1,dayF) , mixN(0.26,mixN(1,0.82,twi*0.6),dayF), mixN(0.4,mixN(1,0.7,twi*0.6),dayF));
+    sky.cloudMat.opacity = 0.12 + 0.8*dayF;
+    // painel
+    const icon = (sinA > 0.25) ? '☀️' : (sinA > -0.12 ? (h < 12 ? '🌅' : '🌇') : '🌙');
+    document.getElementById('sunIcon').textContent = icon;
+    document.getElementById('sunLabel').textContent = fmtHour(h);
+  }
+  function fitSkyToScene(minX,maxX,minZ,maxZ){
+    if(!sky) return;
+    const R = 0.5*Math.hypot(maxX-minX, maxZ-minZ) + 6;
+    const c = sky.light.shadow.camera;
+    c.left = -R; c.right = R; c.top = R; c.bottom = -R; c.updateProjectionMatrix();
+    updateSky();
+  }
+  function updateSkyAnim(){
+    if(!sky) return;
+    const now = performance.now(), dt = Math.min(0.1, (now - (skyLastT || now))/1000); skyLastT = now;
+    if(skyPlaying){
+      skyHour = (skyHour + dt*0.6) % 24;
+      document.getElementById('sunSlider').value = skyHour;
+      updateSky();
+    }
+    const day = skyHour > 5.5 && skyHour < 18.5;
+    if(day){ sky.cloudList.forEach(g => { g.position.x += g.userData.speed*dt; if(g.position.x > 220) g.position.x = -220; }); }
+    const nf = sky.starMat.opacity;
+    if(nf > 0.5){
+      sky.starMat.size = 1.6 + 0.25*Math.sin(now/700);
+      // estrela cadente de tempos em tempos
+      if(sky.shootT < 0){
+        sky.shootNext -= dt;
+        if(sky.shootNext <= 0){
+          sky.shootT = 0; sky.shootNext = 6 + Math.random()*9;
+          const th = Math.random()*Math.PI*2;
+          sky.shoot.position.set(sceneCenter.x + Math.cos(th)*110, 120 + Math.random()*50, sceneCenter.z + Math.sin(th)*110);
+          sky.shootDir.set(Math.random()*2-1, -0.35, Math.random()*2-1).normalize();
+          sky.shoot.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,-1), sky.shootDir);
+        }
+      }else{
+        sky.shootT += dt;
+        sky.shoot.position.x += sky.shootDir.x*150*dt; sky.shoot.position.y += sky.shootDir.y*150*dt; sky.shoot.position.z += sky.shootDir.z*150*dt;
+        sky.shootMat.opacity = nf*Math.max(0, 1 - sky.shootT/0.9);
+        if(sky.shootT > 0.9){ sky.shootT = -1; sky.shootMat.opacity = 0; }
+      }
+    }else if(sky.shootT >= 0){ sky.shootT = -1; sky.shootMat.opacity = 0; }
+  }
 
   function ensureThree(){
     if(threeRenderer) return;
@@ -852,11 +1056,7 @@
     threeScene.background = new THREE.Color(0x141c28);
     threeCamera = new THREE.PerspectiveCamera(55, 1, 0.1, 500);
     threeCamera.rotation.order = 'YXZ';
-    threeScene.add(new THREE.AmbientLight(0xffffff, 0.65));
-    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
-    dir.position.set(10,15,8);
-    threeScene.add(dir);
-    threeScene.add(new THREE.GridHelper(60, 60, 0x33465d, 0x1c2735));
+    initSky();
     threeControls = new THREE.OrbitControls(threeCamera, threeRenderer.domElement);
     threeControls.enableDamping = true;
     threeControls.maxPolarAngle = Math.PI*0.49;
@@ -864,7 +1064,7 @@
     const lockMouse = () => { if(fpMode && !fpControls.isLocked && !window.matchMedia('(pointer: coarse)').matches){ try{ fpControls.lock(); }catch(e){} } };
     canvas.addEventListener('click', lockMouse);
     document.getElementById('fpLookArea').addEventListener('click', lockMouse);
-    document.addEventListener('pointerlockchange', () => { if(!document.pointerLockElement && fpMode) exitFirstPerson(); });
+    
     setupFirstPersonInput();
     (function animate(){
       requestAnimationFrame(animate);
@@ -899,6 +1099,7 @@
       }else{
         threeControls.update();
       }
+      updateSkyAnim();
       threeRenderer.render(threeScene, threeCamera);
     })();
   }
@@ -926,6 +1127,8 @@
   }
   function enterFirstPerson(){
     fpMode = true;
+    applyCeiling();
+    drawerLeft.classList.remove('open'); drawerRight.classList.remove('open');
     document.getElementById('stage').classList.add('fp');
     fpKeys = {}; fpJoystickVec = {x:0,y:0}; fpLookVec = {x:0,y:0};
     threeControls.enabled = false;
@@ -959,6 +1162,7 @@
   function exitFirstPerson(){
     const wasFp = fpMode;
     fpMode = false;
+    applyCeiling();
     document.getElementById('stage').classList.remove('fp');
     fpKeys = {}; fpJoystickVec = {x:0,y:0}; fpLookVec = {x:0,y:0};
     if(fpControls && fpControls.isLocked) fpControls.unlock();
@@ -1123,12 +1327,13 @@
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({color}));
     mesh.position.set(mx, height/2, my);
     mesh.rotation.y = Math.atan2(-dy, dx);
+    mesh.castShadow = true; mesh.receiveShadow = true;
     parent.add(mesh);
   }
   function clear3DScene(){
     const keep = [];
     threeScene.children.forEach(c => {
-      if(c.isLight || c.type === 'GridHelper'){ keep.push(c); return; }
+      if(c.isLight || c.type === 'GridHelper' || (c.userData && c.userData.keep)){ keep.push(c); return; }
       c.traverse(o => {
         if(o.geometry) o.geometry.dispose();
         if(o.material){ (Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose()); }
@@ -1141,7 +1346,13 @@
     ensureThree();
     clear3DScene();
     collisionSegs = [];
+    ceilingMeshes = [];
     let cx=0, cz=0, count=0;
+    let bMinX=1e9, bMaxX=-1e9, bMinZ=1e9, bMaxZ=-1e9;
+    const grow = (x,z) => { bMinX=Math.min(bMinX,x); bMaxX=Math.max(bMaxX,x); bMinZ=Math.min(bMinZ,z); bMaxZ=Math.max(bMaxZ,z); };
+    rooms.forEach(r => { const d = Math.hypot(r.len,r.wid)/2; grow(r.x+r.len/2-d, r.y+r.wid/2-d); grow(r.x+r.len/2+d, r.y+r.wid/2+d); });
+    walls.forEach(w => { grow(w.x1,w.y1); grow(w.x2,w.y2); });
+    if(bMinX > bMaxX){ bMinX=0; bMaxX=8; bMinZ=0; bMaxZ=8; }
     rooms.forEach(r => {
       const h = r.height || 2.7;
       const group = new THREE.Group();
@@ -1149,11 +1360,20 @@
       group.rotation.y = -(r.rot||0)*Math.PI/180;
       const pts = roomLocalPoints(r).map(p => ({x: p.x - r.len/2, y: p.y - r.wid/2}));
       const shape = new THREE.Shape(pts.map(p => new THREE.Vector2(p.x,p.y)));
-      const floorTex = getFloorTexture(r.len/1.4, r.wid/1.4);
-      const floorMesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshStandardMaterial({map:floorTex, side:THREE.DoubleSide, roughness:0.85}));
+      const floorTex = r.noCeiling ? getGrassTexture(r.len/2.2, r.wid/2.2) : getFloorTexture(r.len/1.4, r.wid/1.4);
+      const floorMesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshStandardMaterial({map:floorTex, side:THREE.DoubleSide, roughness:r.noCeiling ? 1 : 0.85}));
+      floorMesh.receiveShadow = true;
       floorMesh.rotation.x = Math.PI/2;
       floorMesh.position.y = 0.01;
       group.add(floorMesh);
+      if(!r.noCeiling){
+        const ceilMesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshStandardMaterial({color:0xf3f5f7, side:THREE.DoubleSide, roughness:0.95}));
+        ceilMesh.rotation.x = Math.PI/2;
+        ceilMesh.position.y = h;
+        ceilMesh.castShadow = true;
+        group.add(ceilMesh);
+        ceilingMeshes.push(ceilMesh);
+      }
       const wColor = r.wallColor || '#5eead4';
       const effOpen = effectiveOpenings(r, true);
       for(let i=0;i<pts.length;i++){
@@ -1182,6 +1402,8 @@
     threeCamera.position.set(tx+8, 9, tz+8);
     threeControls.target.set(tx, 1, tz);
     threeControls.update();
+    applyCeiling();
+    fitSkyToScene(bMinX,bMaxX,bMinZ,bMaxZ);
     resize3D();
   }
   document.getElementById('toggle3DBtn').addEventListener('click', () => {
@@ -1194,6 +1416,14 @@
     if(!view3D && fpMode) exitFirstPerson();
     document.getElementById('toggle3DBtn').textContent = view3D ? 'Voltar para 2D' : 'Ver em 3D';
     if(view3D) build3DScene(); else renderPlan();
+  });
+  const sunSlider = document.getElementById('sunSlider');
+  sunSlider.addEventListener('input', () => { skyHour = parseFloat(sunSlider.value); skyPlaying = false; document.getElementById('sunPlay').textContent = '▶'; updateSky(); });
+  sunSlider.addEventListener('change', () => sunSlider.blur());
+  document.getElementById('sunPlay').addEventListener('click', () => {
+    skyPlaying = !skyPlaying; skyLastT = 0;
+    document.getElementById('sunPlay').textContent = skyPlaying ? '⏸' : '▶';
+    document.getElementById('sunPlay').blur();
   });
   window.addEventListener('resize', () => { if(view3D && threeRenderer) resize3D(); else if(!view3D) renderPlan(); });
 

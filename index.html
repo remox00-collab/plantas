@@ -175,8 +175,11 @@
     <div class="row" style="margin-bottom:10px;">
       <button id="zoomOutBtn">− Zoom</button>
       <button id="zoomInBtn">+ Zoom</button>
+      <button id="undoBtn" title="Desfazer (Ctrl+Z)">↩️ Desfazer</button>
+      <button id="redoBtn" title="Refazer (Ctrl+Y)">↪️ Refazer</button>
       <button id="toggleOpeningMode">Ativar modo portas/janelas</button>
       <button id="toggleWallDrawMode">Ativar modo parede manual</button>
+      <button id="toggleFreeDraw">✏️ Ativar desenho livre</button>
       <button class="primary" id="toggle3DBtn">Ver em 3D</button>
     </div>
     <div id="planWrap"><canvas id="planCanvas"></canvas></div>
@@ -194,6 +197,18 @@
       <button class="primary" id="fpEnterBtn">🚶 Modo primeira pessoa</button>
     </div>
     <p class="hint" id="openingHint">Modo portas/janelas: toque numa parede de qualquer cômodo pra adicionar.</p>
+    <div id="freeDrawBar" class="row" style="display:none; margin:8px 0; align-items:center;">
+      <button id="fdPen" class="primary">✏️ Caneta</button>
+      <button id="fdEraser">🧽 Borracha</button>
+      <input type="color" id="fdColor" value="#fbbf24" title="Cor" style="width:44px;height:36px;padding:0;border:none;background:none;">
+      <select id="fdSize"><option value="2">Fina</option><option value="4" selected>Média</option><option value="8">Grossa</option></select>
+      <button id="fdUndo">↩️ Desfazer</button>
+      <button id="fdClear" class="danger">Limpar desenho</button>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="fdPenOnly"> só caneta (ignora o dedo)</label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="fdAuto" checked> fechou o traço = vira cômodo</label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="fdShow" checked> mostrar desenho</label>
+    </div>
+    <p class="hint" id="freeDrawHint" style="display:none;">Desenho livre: risque a planta como um rascunho com a caneta da mesa (ou mouse/dedo). Depois desative o modo e coloque as medidas nos cômodos por cima. A borracha apaga o traço inteiro que você tocar. Se você terminar o traço encostando na ponta onde começou (formando um contorno fechado), ele vira um cômodo na hora — desmarque a opção "fechou o traço = vira cômodo" se quiser só rascunhar.</p>
     <p class="hint" id="wallDrawHint">Modo parede manual: toque no ponto inicial, depois no ponto final da parede.</p>
     <p class="hint">Toque num cômodo pra selecionar, arraste pra mover. Com ele selecionado, arraste a alça verde acima dele pra girar livremente. Pinça com dois dedos (ou os botões de zoom acima) pra aproximar. Em cômodos com forma medida por AR/ângulos, aparecem bolinhas no meio de cada parede — toque numa pra editar só aquela parede.</p>
     <div class="row" style="margin-top:10px;">
@@ -210,7 +225,7 @@
     <div class="fields">
       <div><label>Comprimento (m)</label><input id="manualWallLen" inputmode="decimal"></div>
     </div>
-    <p class="hint">Arraste a parede na planta pra reposicionar.</p>
+    <p class="hint">Arraste a parede na planta pra reposicionar. Arraste uma das bolinhas amarelas nas pontas pra girar a parede em volta da outra ponta (o comprimento se mantém) e encostar em outra parede: perto de uma ponta, ela gruda sozinha.</p>
     <div class="row" style="margin-top:10px;">
       <button class="primary" id="saveManualWallLen">Salvar comprimento</button>
       <button id="closeManualWallEditor">Fechar</button>
@@ -271,9 +286,62 @@
 
   function saveRooms(){
     try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(rooms)); }catch(e){}
+    scheduleCommit();
+  }
+  const DRAW_STORAGE_KEY = "planta2d_draw_v1";
+  let strokes = [];
+  try{ const sd = localStorage.getItem(DRAW_STORAGE_KEY); if(sd) strokes = JSON.parse(sd); }catch(e){ strokes = []; }
+  function saveDraw(){ try{ localStorage.setItem(DRAW_STORAGE_KEY, JSON.stringify(strokes)); }catch(e){} scheduleCommit(); }
+
+  // Histórico geral (Ctrl+Z / Ctrl+Y): cada ação concluída (mover, apagar, desenhar, editar...) vira um passo
+  const undoStack = [], redoStack = [];
+  const snapState = () => JSON.stringify({rooms, walls, strokes});
+  let lastSnap = snapState(), commitPending = false;
+  function scheduleCommit(){
+    if(commitPending) return;
+    commitPending = true;
+    setTimeout(() => {
+      commitPending = false;
+      const cur = snapState();
+      if(cur === lastSnap) return;
+      undoStack.push(lastSnap);
+      if(undoStack.length > 100) undoStack.shift();
+      lastSnap = cur;
+      redoStack.length = 0;
+      updateUndoButtons();
+    }, 0);
+  }
+  function updateUndoButtons(){
+    const u = document.getElementById('undoBtn'), r = document.getElementById('redoBtn');
+    if(u) u.disabled = !undoStack.length;
+    if(r) r.disabled = !redoStack.length;
+  }
+  function applySnap(snap){
+    const st = JSON.parse(snap);
+    rooms = st.rooms; walls = st.walls; strokes = st.strokes;
+    lastSnap = snap;
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(rooms)); localStorage.setItem(WALLS_STORAGE_KEY, JSON.stringify(walls)); localStorage.setItem(DRAW_STORAGE_KEY, JSON.stringify(strokes)); }catch(e){}
+    dragging = null; rotating = null; draggingWall = null; draggingOpening = null; pivotDrag = null; pivotSnap = null;
+    selectedRoomId = null; selectedWallIndex = null; selectedManualWallId = null;
+    wallDrawStart = null; pendingOpeningWall = null; editOpeningIndex = null; curStroke = null; erasing = false;
+    hideWallEditor(); hideManualWallEditor();
+    document.getElementById('openingPickerCard').style.display = 'none';
+    renderRoomList(); renderPlan(); updateUndoButtons();
+  }
+  function doUndo(){
+    if(commitPending){ const cur = snapState(); if(cur !== lastSnap){ undoStack.push(lastSnap); lastSnap = cur; commitPending = false; } }
+    if(!undoStack.length) return;
+    redoStack.push(lastSnap);
+    applySnap(undoStack.pop());
+  }
+  function doRedo(){
+    if(!redoStack.length) return;
+    undoStack.push(lastSnap);
+    applySnap(redoStack.pop());
   }
   function saveWalls(){
     try{ localStorage.setItem(WALLS_STORAGE_KEY, JSON.stringify(walls)); }catch(e){}
+    scheduleCommit();
   }
 
   // --- Camera capture ---
@@ -703,6 +771,8 @@
   let openingMode = false, pendingOpeningWall = null, editOpeningIndex = null, draggingOpening = null;
   let wallDrawMode = false, wallDrawStart = null;
   let selectedManualWallId = null, draggingWall = null, dragWallStart = null;
+  let pivotDrag = null, pivotSnap = null;
+  let drawMode = false, drawTool = 'pen', curStroke = null, erasing = false, drawHistory = [];
 
   // --- Visão 3D ---
   let view3D = false, threeScene=null, threeCamera=null, threeRenderer=null, threeControls=null;
@@ -924,6 +994,48 @@
     tex.repeat.set(Math.max(1,repeatX), Math.max(1,repeatY));
     return tex;
   }
+  // Ligação entre cômodos: paredes encostadas viram uma só, e uma porta/janela de um lado abre também o outro
+  function roomEdgesWorld(r){
+    const pts = roomLocalPoints(r).map(p => ({x:p.x-r.len/2, y:p.y-r.wid/2}));
+    return pts.map((a,i) => {
+      const b = pts[(i+1)%pts.length];
+      const A = localToWorldRoom(a.x,a.y,r), B = localToWorldRoom(b.x,b.y,r);
+      return {ax:A.x, ay:A.z, bx:B.x, by:B.z};
+    });
+  }
+  function effectiveOpenings(r, withCuts){
+    const res = (r.openings||[]).map(o => Object.assign({}, o));
+    const myEdges = roomEdgesWorld(r);
+    const myIdx = rooms.indexOf(r);
+    const TOL = 0.22;
+    rooms.forEach((q, qi) => {
+      if(q === r) return;
+      const qEdges = roomEdgesWorld(q);
+      myEdges.forEach((e,i) => {
+        const L = Math.hypot(e.bx-e.ax, e.by-e.ay); if(L < 0.05) return;
+        const ux=(e.bx-e.ax)/L, uy=(e.by-e.ay)/L;
+        qEdges.forEach((f,k) => {
+          const M = Math.hypot(f.bx-f.ax, f.by-f.ay); if(M < 0.05) return;
+          const vx=(f.bx-f.ax)/M, vy=(f.by-f.ay)/M;
+          if(Math.abs(ux*vy - uy*vx) > 0.05) return;
+          const dist = (x,y) => Math.abs((x-e.ax)*uy - (y-e.ay)*ux);
+          if(dist(f.ax,f.ay) > TOL || dist(f.bx,f.by) > TOL) return;
+          const proj = (x,y) => (x-e.ax)*ux + (y-e.ay)*uy;
+          const tc = proj(f.ax,f.ay), td = proj(f.bx,f.by);
+          const lo = Math.max(0, Math.min(tc,td)), hi = Math.min(L, Math.max(tc,td));
+          if(hi - lo < 0.05) return;
+          (q.openings||[]).filter(o => o.wallIndex === k).forEach(o => {
+            const p1 = proj(f.ax+vx*o.dist, f.ay+vy*o.dist);
+            const p2 = proj(f.ax+vx*(o.dist+o.width), f.ay+vy*(o.dist+o.width));
+            const a = Math.max(0, Math.min(p1,p2)), b = Math.min(L, Math.max(p1,p2));
+            if(b - a > 0.1) res.push({wallIndex:i, dist:a, width:b-a, type:o.type, linked:true});
+          });
+          if(withCuts && qi < myIdx) res.push({wallIndex:i, dist:lo, width:hi-lo, type:'merged', linked:true, cut:true});
+        });
+      });
+    });
+    return res;
+  }
   function wallSegmentsForEdge(ax,ay,bx,by,openings){
     const len = Math.hypot(bx-ax, by-ay) || 0.001;
     const sorted = (openings||[]).slice().sort((p,q)=>p.dist-q.dist);
@@ -976,9 +1088,10 @@
       floorMesh.position.y = 0.01;
       group.add(floorMesh);
       const wColor = r.wallColor || '#5eead4';
+      const effOpen = effectiveOpenings(r, true);
       for(let i=0;i<pts.length;i++){
         const a=pts[i], b=pts[(i+1)%pts.length];
-        const wo = (r.openings||[]).filter(o=>o.wallIndex===i);
+        const wo = effOpen.filter(o=>o.wallIndex===i);
         wallSegmentsForEdge(a.x,a.y,b.x,b.y,wo).forEach(s => {
           addWallBox(group, s.mx,s.my,s.segLen,s.dx,s.dy,h,0.12,wColor);
           const ep = segEndpoints(s.mx,s.my,s.dx,s.dy,s.segLen);
@@ -1395,7 +1508,7 @@
       pctx.fill(); pctx.stroke();
 
       // aberturas (portas/janelas) — apagam um trecho da parede e desenham o símbolo
-      (r.openings||[]).forEach(o => {
+      effectiveOpenings(r, false).forEach(o => {
         const a = vpts[o.wallIndex], b = vpts[(o.wallIndex+1)%vpts.length];
         const dx=b[0]-a[0], dy=b[1]-a[1];
         const wl = Math.hypot(dx,dy) || 1;
@@ -1411,6 +1524,8 @@
           [-3,3].forEach(off => {
             pctx.beginPath(); pctx.moveTo(sx+nx*off, sy+ny*off); pctx.lineTo(ex+nx*off, ey+ny*off); pctx.stroke();
           });
+        }else if(o.linked){
+          // só o vão (o símbolo fica no cômodo onde a porta foi colocada)
         }else if(o.type === 'sliding'){
           pctx.strokeStyle = '#5eead4'; pctx.lineWidth = 2;
           const mx=(sx+ex)/2, my=(sy+ey)/2;
@@ -1505,6 +1620,42 @@
       pctx.fillText(len.toFixed(2)+'m', (x1+x2)/2, (y1+y2)/2 - 6);
       pctx.restore();
     });
+    // desenho livre (rascunho)
+    if(document.getElementById('fdShow').checked){
+      pctx.save();
+      pctx.lineCap = 'round'; pctx.lineJoin = 'round';
+      strokes.forEach(st => {
+        pctx.strokeStyle = st.color;
+        const pts = st.pts;
+        if(pts.length === 1){
+          pctx.fillStyle = st.color;
+          pctx.beginPath(); pctx.arc(pts[0].x*eff+MARGIN, pts[0].y*eff+MARGIN, st.size/2, 0, Math.PI*2); pctx.fill();
+          return;
+        }
+        for(let i=1;i<pts.length;i++){
+          pctx.lineWidth = st.size * (0.5 + (pts[i].p||0.5));
+          pctx.beginPath();
+          pctx.moveTo(pts[i-1].x*eff+MARGIN, pts[i-1].y*eff+MARGIN);
+          pctx.lineTo(pts[i].x*eff+MARGIN, pts[i].y*eff+MARGIN);
+          pctx.stroke();
+        }
+      });
+      pctx.restore();
+    }
+    // alças de giro nas pontas da parede manual selecionada
+    if(selectedManualWallId && !drawMode){
+      const sw = walls.find(w => w.id === selectedManualWallId);
+      if(sw){
+        [[sw.x1,sw.y1],[sw.x2,sw.y2]].forEach(([hx,hy]) => {
+          pctx.fillStyle = '#fbbf24'; pctx.strokeStyle = '#0e1620'; pctx.lineWidth = 2;
+          pctx.beginPath(); pctx.arc(hx*eff+MARGIN, hy*eff+MARGIN, 9, 0, Math.PI*2); pctx.fill(); pctx.stroke();
+        });
+      }
+    }
+    if(pivotSnap){
+      pctx.strokeStyle = '#22c55e'; pctx.lineWidth = 3;
+      pctx.beginPath(); pctx.arc(pivotSnap.x*eff+MARGIN, pivotSnap.y*eff+MARGIN, 14, 0, Math.PI*2); pctx.stroke();
+    }
     if(wallDrawStart){
       const sx = wallDrawStart.x*eff+MARGIN, sy = wallDrawStart.y*eff+MARGIN;
       pctx.fillStyle = '#fbbf24';
@@ -1549,7 +1700,23 @@
   }
 
   function dragStart(e){
+    if(drawMode) return;
     const p = pointerPos(e);
+    if(!wallDrawMode && !openingMode && selectedManualWallId){
+      const sw = walls.find(w => w.id === selectedManualWallId);
+      if(sw){
+        const eff0 = SCALE*zoom;
+        const e1 = Math.hypot(p.x-(sw.x1*eff0+MARGIN), p.y-(sw.y1*eff0+MARGIN));
+        const e2 = Math.hypot(p.x-(sw.x2*eff0+MARGIN), p.y-(sw.y2*eff0+MARGIN));
+        if(Math.min(e1,e2) < 20){
+          const moving = e1 <= e2 ? 1 : 2;
+          const px = moving===1 ? sw.x2 : sw.x1, py = moving===1 ? sw.y2 : sw.y1;
+          pivotDrag = {wall:sw, moving, px, py, len: Math.hypot(sw.x2-sw.x1, sw.y2-sw.y1)};
+          e.preventDefault();
+          return;
+        }
+      }
+    }
     if(wallDrawMode){
       const eff = SCALE*zoom;
       const snapped = snapPoint((p.x-MARGIN)/eff, (p.y-MARGIN)/eff);
@@ -1646,6 +1813,33 @@
   }
   function dragMove(e){
     const p = pointerPos(e);
+    if(pivotDrag){
+      const eff = SCALE*zoom;
+      const tx = (p.x-MARGIN)/eff, ty = (p.y-MARGIN)/eff;
+      const w = pivotDrag.wall;
+      let nx, ny;
+      // gruda numa ponta de outra parede quando o dedo chega perto
+      pivotSnap = null;
+      let bestD = 18/eff;
+      walls.forEach(o => {
+        if(o.id === w.id) return;
+        [[o.x1,o.y1],[o.x2,o.y2]].forEach(([qx,qy]) => {
+          const d = Math.hypot(tx-qx, ty-qy);
+          if(d < bestD){ bestD = d; pivotSnap = {x:qx, y:qy}; }
+        });
+      });
+      if(pivotSnap){ nx = pivotSnap.x; ny = pivotSnap.y; }
+      else{
+        const ang = Math.atan2(ty-pivotDrag.py, tx-pivotDrag.px);
+        nx = pivotDrag.px + Math.cos(ang)*pivotDrag.len;
+        ny = pivotDrag.py + Math.sin(ang)*pivotDrag.len;
+      }
+      if(pivotDrag.moving === 1){ w.x1 = nx; w.y1 = ny; } else { w.x2 = nx; w.y2 = ny; }
+      document.getElementById('manualWallLen').value = Math.hypot(w.x2-w.x1, w.y2-w.y1).toFixed(2);
+      renderPlan();
+      e.preventDefault();
+      return;
+    }
     if(draggingWall){
       const eff = SCALE*zoom;
       const dx = (p.x - dragWallStart.x)/eff, dy = (p.y - dragWallStart.y)/eff;
@@ -1691,6 +1885,11 @@
     }
   }
   function dragEnd(){
+    if(pivotDrag){
+      pivotDrag = null; pivotSnap = null;
+      saveWalls(); tryCloseLoop(); renderPlan();
+      return;
+    }
     if(draggingWall){
       const w = draggingWall;
       const others = walls.filter(x => x.id !== w.id);
@@ -1746,6 +1945,16 @@
     }
   }
 
+  document.getElementById('undoBtn').addEventListener('click', doUndo);
+  document.getElementById('redoBtn').addEventListener('click', doRedo);
+  document.addEventListener('keydown', (e) => {
+    if(!(e.ctrlKey || e.metaKey)) return;
+    const tag = document.activeElement ? document.activeElement.tagName : '';
+    if(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    const k = e.key.toLowerCase();
+    if(k === 'z' && !e.shiftKey){ doUndo(); e.preventDefault(); }
+    else if(k === 'y' || (k === 'z' && e.shiftKey)){ doRedo(); e.preventDefault(); }
+  });
   document.addEventListener('keydown', (e) => {
     if(e.key !== 'Delete' && e.key !== 'Backspace') return;
     const tag = document.activeElement ? document.activeElement.tagName : '';
@@ -1787,11 +1996,13 @@
       pinchStartDist = touchDist(e.touches[0], e.touches[1]);
       pinchStartZoom = zoom;
       dragging = null;
+      if(curStroke){ strokes = strokes.filter(x => x !== curStroke); curStroke = null; saveDraw(); renderPlan(); }
       if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer = null; }
       e.preventDefault();
     }else if(e.touches.length === 1){
+      if(drawMode){ e.preventDefault(); return; }
       dragStart(e);
-      if(!wallDrawMode && !openingMode){
+      if(!wallDrawMode && !openingMode && !drawMode){
         touchStartPos = {x:e.touches[0].clientX, y:e.touches[0].clientY};
         const pp = pointerPos(e);
         longPressTimer = setTimeout(() => { longPressTimer = null; handleLongPress(pp.x, pp.y); }, 550);
@@ -1854,8 +2065,8 @@
   });
 
   document.getElementById('exportBackup').addEventListener('click', () => {
-    if(!rooms.length && !walls.length){ alert('Não há nada pra salvar ainda.'); return; }
-    const blob = new Blob([JSON.stringify({rooms, walls}, null, 2)], {type:'application/json'});
+    if(!rooms.length && !walls.length && !strokes.length){ alert('Não há nada pra salvar ainda.'); return; }
+    const blob = new Blob([JSON.stringify({rooms, walls, draw: strokes}, null, 2)], {type:'application/json'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1880,6 +2091,7 @@
         else throw new Error('formato inválido');
         if((rooms.length||walls.length) && !confirm('Isso vai substituir o que está na planta atual pelo conteúdo do backup. Continuar?')) return;
         rooms = newRooms; walls = newWalls;
+        if(parsed && !Array.isArray(parsed) && Array.isArray(parsed.draw)){ strokes = parsed.draw; saveDraw(); }
         saveRooms(); saveWalls(); renderRoomList(); renderPlan();
         alert('Backup restaurado: ' + rooms.length + ' cômodo(s), ' + walls.length + ' parede(s) manual(is).');
       }catch(err){
@@ -1890,6 +2102,154 @@
     e.target.value = '';
   });
 
+  // ===== Desenho livre (rascunho com caneta / mesa de desenho) =====
+  const fdBar = document.getElementById('freeDrawBar');
+  function setDrawTool(t){
+    drawTool = t;
+    document.getElementById('fdPen').classList.toggle('primary', t==='pen');
+    document.getElementById('fdEraser').classList.toggle('primary', t==='eraser');
+  }
+  document.getElementById('fdPen').addEventListener('click', () => setDrawTool('pen'));
+  document.getElementById('fdEraser').addEventListener('click', () => setDrawTool('eraser'));
+  document.getElementById('fdShow').addEventListener('change', renderPlan);
+  document.getElementById('fdUndo').addEventListener('click', doUndo);
+  document.getElementById('fdClear').addEventListener('click', () => {
+    if(!strokes.length) return;
+    if(!confirm('Apagar todo o desenho livre? (As paredes e cômodos não são afetados.)')) return;
+    strokes = []; saveDraw(); renderPlan();
+  });
+  document.getElementById('toggleFreeDraw').addEventListener('click', () => {
+    drawMode = !drawMode;
+    if(drawMode){
+      if(wallDrawMode) document.getElementById('toggleWallDrawMode').click();
+      if(openingMode) document.getElementById('toggleOpeningMode').click();
+      document.getElementById('fdShow').checked = true;
+    }
+    fdBar.style.display = drawMode ? 'flex' : 'none';
+    document.getElementById('freeDrawHint').style.display = drawMode ? 'block' : 'none';
+    document.getElementById('toggleFreeDraw').textContent = drawMode ? '✏️ Desativar desenho livre' : '✏️ Ativar desenho livre';
+    planCanvas.style.cursor = drawMode ? 'crosshair' : '';
+    curStroke = null; erasing = false;
+    renderPlan();
+  });
+  function drawPoint(e){
+    const eff = SCALE*zoom;
+    const q = pointerPos(e);
+    return {x: +((q.x-MARGIN)/eff).toFixed(4), y: +((q.y-MARGIN)/eff).toFixed(4), p: (e.pointerType==='pen' && e.pressure>0) ? +e.pressure.toFixed(2) : 0.5};
+  }
+  function eraseAt(pt){
+    const eff = SCALE*zoom, tol = 12/eff;
+    const before = strokes.length;
+    strokes = strokes.filter(st => !st.pts.some(q => Math.hypot(q.x-pt.x, q.y-pt.y) < tol));
+    if(strokes.length !== before) renderPlan();
+  }
+  planCanvas.addEventListener('pointerdown', (e) => {
+    if(!drawMode) return;
+    if(e.pointerType === 'touch' && document.getElementById('fdPenOnly').checked) return;
+    if(e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    try{ planCanvas.setPointerCapture(e.pointerId); }catch(err){}
+    const pt = drawPoint(e);
+    if(drawTool === 'eraser' || (e.pointerType==='pen' && e.buttons === 32)){
+      erasing = true; eraseAt(pt);
+    }else{
+      curStroke = {color: document.getElementById('fdColor').value, size: parseFloat(document.getElementById('fdSize').value), pts:[pt]};
+      strokes.push(curStroke);
+      renderPlan();
+    }
+  });
+  planCanvas.addEventListener('pointermove', (e) => {
+    if(!drawMode) return;
+    if(!curStroke && !erasing) return;
+    e.preventDefault();
+    const evs = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
+    evs.forEach(ev => {
+      const pt = drawPoint(ev);
+      if(erasing){ eraseAt(pt); return; }
+      const last = curStroke.pts[curStroke.pts.length-1];
+      if(Math.hypot(pt.x-last.x, pt.y-last.y) > 0.004) curStroke.pts.push(pt);
+    });
+    if(curStroke) renderPlan();
+  });
+  function distPtSeg(q, a, b){
+    const dx=b.x-a.x, dy=b.y-a.y, l2=dx*dx+dy*dy;
+    let t = l2 ? ((q.x-a.x)*dx+(q.y-a.y)*dy)/l2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(q.x-(a.x+t*dx), q.y-(a.y+t*dy));
+  }
+  function rdp(pts, eps){
+    if(pts.length < 3) return pts;
+    const a = pts[0], b = pts[pts.length-1];
+    let dmax = 0, idx = 0;
+    for(let i=1;i<pts.length-1;i++){ const d = distPtSeg(pts[i], a, b); if(d > dmax){ dmax = d; idx = i; } }
+    if(dmax > eps){
+      const l = rdp(pts.slice(0, idx+1), eps), r = rdp(pts.slice(idx), eps);
+      return l.slice(0, -1).concat(r);
+    }
+    return [a, b];
+  }
+  function strokeToRoom(st){
+    const pts = st.pts;
+    if(pts.length < 8) return false;
+    let per = 0, minX=1e9, maxX=-1e9, minY=1e9, maxY=-1e9;
+    for(let i=0;i<pts.length;i++){
+      if(i) per += Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+      minX=Math.min(minX,pts[i].x); maxX=Math.max(maxX,pts[i].x); minY=Math.min(minY,pts[i].y); maxY=Math.max(maxY,pts[i].y);
+    }
+    if(maxX-minX < 0.8 || maxY-minY < 0.8) return false;
+    const gap = Math.hypot(pts[0].x-pts[pts.length-1].x, pts[0].y-pts[pts.length-1].y);
+    if(gap > Math.max(0.35, 0.08*per)) return false;
+    let poly = rdp(pts.map(q => ({x:q.x, y:q.y})), 0.15);
+    poly = poly.slice(0, -1); // a última ponta é a mesma do começo
+    // tira vértices quase em linha reta
+    let changed = true;
+    while(changed && poly.length > 3){
+      changed = false;
+      for(let i=0;i<poly.length;i++){
+        const a = poly[(i-1+poly.length)%poly.length], b = poly[i], c = poly[(i+1)%poly.length];
+        const a1 = Math.atan2(b.y-a.y, b.x-a.x), a2 = Math.atan2(c.y-b.y, c.x-b.x);
+        let d = Math.abs(a2-a1); if(d > Math.PI) d = 2*Math.PI - d;
+        if(d < 0.21){ poly.splice(i,1); changed = true; break; }
+      }
+    }
+    if(poly.length < 3) return false;
+    // endireita lados quase horizontais/verticais
+    const tol = Math.tan(10*Math.PI/180);
+    for(let i=0;i<poly.length;i++){
+      const a = poly[i], b = poly[(i+1)%poly.length];
+      const dx = Math.abs(b.x-a.x), dy = Math.abs(b.y-a.y);
+      if(dy < tol*dx){ const m=(a.y+b.y)/2; a.y=m; b.y=m; }
+      else if(dx < tol*dy){ const m=(a.x+b.x)/2; a.x=m; b.x=m; }
+    }
+    // gruda em pontas de paredes que já existem e arredonda pra centímetros
+    poly = poly.map(v => { const q = snapPoint(v.x, v.y); return {x:+q.x.toFixed(2), y:+q.y.toFixed(2)}; });
+    const clean = poly.filter((v,i) => { const n = poly[(i+1)%poly.length]; return Math.hypot(n.x-v.x, n.y-v.y) > 0.1; });
+    if(clean.length < 3) return false;
+    let area = 0;
+    for(let i=0;i<clean.length;i++){ const a=clean[i], b=clean[(i+1)%clean.length]; area += a.x*b.y - b.x*a.y; }
+    if(Math.abs(area/2) < 0.5) return false;
+    const base = Date.now();
+    clean.forEach((v,i) => {
+      const n = clean[(i+1)%clean.length];
+      walls.push({id: base+i, x1:v.x, y1:v.y, x2:n.x, y2:n.y});
+    });
+    strokes = strokes.filter(x => x !== st);
+    saveDraw(); saveWalls();
+    tryCloseLoop();
+    renderPlan();
+    return true;
+  }
+  const endDrawStroke = () => {
+    if(!drawMode) return;
+    const st = curStroke, wasErasing = erasing;
+    curStroke = null; erasing = false;
+    if(st || wasErasing) saveDraw();
+    if(st && document.getElementById('fdAuto').checked) strokeToRoom(st);
+  };
+  planCanvas.addEventListener('pointerup', endDrawStroke);
+  planCanvas.addEventListener('pointercancel', endDrawStroke);
+
+  updateUndoButtons();
   renderRoomList();
   renderPlan();
 })();

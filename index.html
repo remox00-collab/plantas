@@ -27,6 +27,11 @@
     background:var(--bg); padding:18px 16px 10px; z-index:5;
     border-bottom:1px solid var(--line);
   }
+  #projectTabs{display:flex; gap:6px; margin-top:10px; overflow-x:auto; align-items:center; padding-bottom:2px;}
+  #projectTabs button{flex:0 0 auto; padding:7px 13px; font-size:14px; white-space:nowrap;}
+  #projectTabs button.tab.active{background:var(--accent); color:#0b1620; border-color:var(--accent); font-weight:600;}
+  #projectTabs button.tab:not(.active){opacity:.85;}
+  #projectTabs .sep{flex:0 0 1px; align-self:stretch; background:var(--line); margin:0 4px;}
   header h1{margin:0; font-size:19px; font-weight:600; letter-spacing:.2px;}
   header p{margin:4px 0 0; font-size:13px; color:var(--muted);}
   main{padding:12px 16px 40px; max-width:none; margin:0;}
@@ -121,6 +126,7 @@
 <header>
   <h1>Planta2D</h1>
   <p>Fotografe cada cômodo, marque os cantos e digite as medidas.</p>
+  <div id="projectTabs"></div>
 </header>
 <main>
 
@@ -304,8 +310,24 @@
 
 <script>
 (function(){
-  const STORAGE_KEY = "planta2d_rooms_v1";
-  const WALLS_STORAGE_KEY = "planta2d_walls_v1";
+  // ===== Projetos: cada projeto guarda seus próprios cômodos, paredes e desenho =====
+  const PROJECTS_KEY = "planta2d_projects_v1";
+  let projIndex = null;
+  try{ projIndex = JSON.parse(localStorage.getItem(PROJECTS_KEY)); }catch(e){ projIndex = null; }
+  if(!projIndex || !Array.isArray(projIndex.list) || !projIndex.list.length){
+    // o projeto que já existia continua usando as mesmas chaves de antes (nada se perde)
+    projIndex = {active:'p1', list:[{id:'p1', name:'Projeto 1', legacy:true}]};
+    try{ localStorage.setItem(PROJECTS_KEY, JSON.stringify(projIndex)); }catch(e){}
+  }
+  function saveProjIndex(){ try{ localStorage.setItem(PROJECTS_KEY, JSON.stringify(projIndex)); }catch(e){} }
+  function keysFor(pr){
+    return pr.legacy
+      ? {rooms:"planta2d_rooms_v1", walls:"planta2d_walls_v1", draw:"planta2d_draw_v1"}
+      : {rooms:"planta2d_p_"+pr.id+"_rooms", walls:"planta2d_p_"+pr.id+"_walls", draw:"planta2d_p_"+pr.id+"_draw"};
+  }
+  let activeProj = projIndex.list.find(pr => pr.id === projIndex.active) || projIndex.list[0];
+  let STORAGE_KEY = keysFor(activeProj).rooms;
+  let WALLS_STORAGE_KEY = keysFor(activeProj).walls;
   let rooms = [];
   let walls = [];
   try{
@@ -321,7 +343,7 @@
     try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(rooms)); }catch(e){}
     scheduleCommit();
   }
-  const DRAW_STORAGE_KEY = "planta2d_draw_v1";
+  let DRAW_STORAGE_KEY = keysFor(activeProj).draw;
   let strokes = [];
   try{ const sd = localStorage.getItem(DRAW_STORAGE_KEY); if(sd) strokes = JSON.parse(sd); }catch(e){ strokes = []; }
   function saveDraw(){ try{ localStorage.setItem(DRAW_STORAGE_KEY, JSON.stringify(strokes)); }catch(e){} scheduleCommit(); }
@@ -701,6 +723,7 @@
       if(editingRoomId === r.id){
         div.innerHTML = `<div class="fullw" style="width:100%;">
           <div class="fields">
+            <div style="grid-column:1 / -1;"><label>Nome do cômodo</label><input id="editName" maxlength="40" value="${escapeHtml(r.name || '')}"></div>
             <div><label>Comprimento (m)</label><input id="editLen" inputmode="decimal" value="${r.len}"></div>
             <div><label>Largura (m)</label><input id="editWid" inputmode="decimal" value="${r.wid}"></div>
             <div><label>Altura (m)</label><input id="editHeight" inputmode="decimal" value="${r.height||''}"></div>
@@ -717,17 +740,21 @@
           const wid = parseFloat(document.getElementById('editWid').value.replace(',','.'));
           const height = parseFloat(document.getElementById('editHeight').value.replace(',','.'));
           const rot = parseFloat(document.getElementById('editRot').value.replace(',','.'));
+          const newName = document.getElementById('editName').value.trim();
+          if(newName) r.name = newName;
+          const dimsChanged = (len>0 && Math.abs(len - r.len) > 0.001) || (wid>0 && Math.abs(wid - r.wid) > 0.001);
           if(len>0) r.len = len;
           if(wid>0) r.wid = wid;
           r.height = height||null;
           r.rot = isNaN(rot) ? 0 : ((rot%360)+360)%360;
-          r.polygon = null;
+          if(dimsChanged) r.polygon = null; // só volta pra retângulo se as medidas mudaram; trocar nome/altura/ângulo mantém a forma
           editingRoomId = null;
           saveRooms(); renderRoomList(); renderPlan();
         });
         document.getElementById('cancelEdit').addEventListener('click', () => {
           editingRoomId = null; renderRoomList();
         });
+        div.querySelectorAll('input').forEach(inp => inp.addEventListener('keydown', ev => { if(ev.key === 'Enter') document.getElementById('saveEdit').click(); }));
         return;
       }
       div.innerHTML = `<div><div class="name" style="cursor:pointer;" title="Toque pra localizar na planta">${r.locked ? '🔒 ' : ''}${escapeHtml(r.name)}</div>
@@ -2361,7 +2388,7 @@
     const pageH = pdf.internal.pageSize.getHeight();
     const margin = 30;
     pdf.setFontSize(16);
-    pdf.text('Planta2D — Planta Baixa', margin, margin);
+    pdf.text(activeProj.name + ' — Planta Baixa', margin, margin);
     pdf.setFontSize(10);
     pdf.text('Gerado em ' + new Date().toLocaleDateString('pt-BR'), margin, margin+14);
     const availW = pageW - margin*2, availH = pageH - margin*2 - 40;
@@ -2387,11 +2414,11 @@
 
   document.getElementById('exportBackup').addEventListener('click', () => {
     if(!rooms.length && !walls.length && !strokes.length){ alert('Não há nada pra salvar ainda.'); return; }
-    const blob = new Blob([JSON.stringify({rooms, walls, draw: strokes}, null, 2)], {type:'application/json'});
+    const blob = new Blob([JSON.stringify({name: activeProj.name, rooms, walls, draw: strokes}, null, 2)], {type:'application/json'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'planta2d-backup-' + new Date().toISOString().slice(0,10) + '.json';
+    a.download = 'planta2d-' + (activeProj.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'') || 'projeto') + '-backup-' + new Date().toISOString().slice(0,10) + '.json';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   });
@@ -2410,7 +2437,7 @@
         if(Array.isArray(parsed)){ newRooms = parsed; newWalls = walls; } // backup antigo, sem paredes manuais
         else if(parsed && Array.isArray(parsed.rooms)){ newRooms = parsed.rooms; newWalls = Array.isArray(parsed.walls) ? parsed.walls : []; }
         else throw new Error('formato inválido');
-        if((rooms.length||walls.length) && !confirm('Isso vai substituir o que está na planta atual pelo conteúdo do backup. Continuar?')) return;
+        if((rooms.length||walls.length) && !confirm('Isso vai substituir o que está no projeto aberto ("' + activeProj.name + '") pelo conteúdo do backup. Continuar?')) return;
         rooms = newRooms; walls = newWalls;
         if(parsed && !Array.isArray(parsed) && Array.isArray(parsed.draw)){ strokes = parsed.draw; saveDraw(); }
         saveRooms(); saveWalls(); renderRoomList(); renderPlan();
@@ -2622,6 +2649,78 @@
     if(!roomAt(p.x,p.y) && !wallAt(p.x,p.y) && !wallHitTestScreen(p.x,p.y)) exitFs();
   });
 
+  // ===== Abas de projetos =====
+  function loadKey(key, fallback){ try{ const v = localStorage.getItem(key); if(v) return JSON.parse(v); }catch(e){} return fallback; }
+  function renderProjectTabs(){
+    const box = document.getElementById('projectTabs');
+    box.innerHTML = '';
+    projIndex.list.forEach(pr => {
+      const b = document.createElement('button');
+      b.className = 'tab' + (pr.id === activeProj.id ? ' active' : '');
+      b.textContent = pr.name;
+      b.title = pr.id === activeProj.id ? 'Projeto aberto' : 'Abrir este projeto';
+      b.addEventListener('click', () => switchProject(pr.id));
+      box.appendChild(b);
+    });
+    const sep = document.createElement('span'); sep.className = 'sep'; box.appendChild(sep);
+    const add = document.createElement('button'); add.className = 'primary'; add.textContent = '+ Novo projeto';
+    add.addEventListener('click', createProject); box.appendChild(add);
+    const ren = document.createElement('button'); ren.textContent = '✏️ Renomear'; ren.title = 'Renomear o projeto aberto';
+    ren.addEventListener('click', renameProject); box.appendChild(ren);
+    const del = document.createElement('button'); del.className = 'danger'; del.textContent = '🗑️ Excluir'; del.title = 'Excluir o projeto aberto';
+    del.addEventListener('click', deleteProject); box.appendChild(del);
+  }
+  function switchProject(id){
+    const pr = projIndex.list.find(x => x.id === id);
+    if(!pr || (activeProj && pr.id === activeProj.id)) return;
+    // desliga modos e sai do 3D antes de trocar
+    if(view3D) document.getElementById('toggle3DBtn').click();
+    if(wallDrawMode) document.getElementById('toggleWallDrawMode').click();
+    if(openingMode) document.getElementById('toggleOpeningMode').click();
+    if(drawMode) document.getElementById('toggleFreeDraw').click();
+    activeProj = pr; projIndex.active = pr.id; saveProjIndex();
+    const k = keysFor(pr);
+    STORAGE_KEY = k.rooms; WALLS_STORAGE_KEY = k.walls; DRAW_STORAGE_KEY = k.draw;
+    rooms = loadKey(k.rooms, []); walls = loadKey(k.walls, []); strokes = loadKey(k.draw, []);
+    undoStack.length = 0; redoStack.length = 0; lastSnap = snapState(); commitPending = false;
+    dragging = null; rotating = null; draggingWall = null; draggingOpening = null; pivotDrag = null; pivotSnap = null;
+    selectedRoomId = null; selectedWallIndex = null; selectedManualWallId = null; editingRoomId = null;
+    wallDrawStart = null; wallPreview = null; pendingOpeningWall = null; editOpeningIndex = null; curStroke = null; erasing = false;
+    hideWallEditor(); hideManualWallEditor();
+    document.getElementById('openingPickerCard').style.display = 'none';
+    zoom = 1;
+    renderProjectTabs(); renderRoomList(); renderPlan(); updateUndoButtons();
+    setTimeout(fitToScreen, 0);
+  }
+  function createProject(){
+    const n = projIndex.list.length + 1;
+    const name = prompt('Nome do novo projeto:', 'Projeto ' + n);
+    if(name === null) return;
+    const id = 'p' + Date.now();
+    projIndex.list.push({id, name: name.trim() || ('Projeto ' + n)});
+    saveProjIndex();
+    switchProject(id);
+  }
+  function renameProject(){
+    const name = prompt('Novo nome do projeto:', activeProj.name);
+    if(name === null || !name.trim()) return;
+    activeProj.name = name.trim();
+    saveProjIndex(); renderProjectTabs();
+  }
+  function deleteProject(){
+    if(projIndex.list.length < 2){ alert('Precisa existir pelo menos um projeto. Crie outro antes de excluir este.'); return; }
+    if(!confirm('Excluir o projeto "' + activeProj.name + '" com todos os cômodos, paredes e desenhos dele? Isso não dá pra desfazer (se tiver dúvida, cancele e salve um backup .json antes).')) return;
+    const gone = activeProj, k = keysFor(gone);
+    const idx = projIndex.list.findIndex(x => x.id === gone.id);
+    const nextPr = projIndex.list[idx+1] || projIndex.list[idx-1];
+    try{ localStorage.removeItem(k.rooms); localStorage.removeItem(k.walls); localStorage.removeItem(k.draw); }catch(e){}
+    projIndex.list.splice(idx, 1);
+    activeProj = null;
+    saveProjIndex();
+    switchProject(nextPr.id);
+  }
+
+  renderProjectTabs();
   updateUndoButtons();
   renderRoomList();
   renderPlan();

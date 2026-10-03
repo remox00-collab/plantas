@@ -29,7 +29,9 @@
   }
   header h1{margin:0; font-size:19px; font-weight:600; letter-spacing:.2px;}
   header p{margin:4px 0 0; font-size:13px; color:var(--muted);}
-  main{padding:16px; max-width:520px; margin:0 auto; padding-bottom:40px;}
+  main{padding:12px 16px 40px; max-width:none; margin:0;}
+  main > .card{max-width:560px; margin-left:auto; margin-right:auto;}
+  main > #stageCard{max-width:none; margin-left:0; margin-right:0; padding:8px;}
   .card{background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px;}
   .card h2{margin:0 0 10px; font-size:15px; font-weight:600;}
   button{
@@ -59,9 +61,23 @@
   .roomItem:last-child{border-bottom:none;}
   .roomItem .dims{font-size:12px; color:var(--muted);}
   .roomItem .name{font-weight:600;}
-  #planWrap{overflow:auto; max-height:70vh; border:1px solid var(--line); border-radius:8px; background:#0e1620; -webkit-overflow-scrolling:touch; overscroll-behavior:contain;}
-  #plan3DWrap{display:none; position:relative; width:100%; height:65vh; border:1px solid var(--line); border-radius:8px; background:#0e1620; overflow:hidden;}
+  #planWrap{position:absolute; inset:0; overflow:auto; background:#0e1620; -webkit-overflow-scrolling:touch; overscroll-behavior:contain;}
+  #plan3DWrap{display:none; position:absolute; inset:0; background:#0e1620; overflow:hidden;}
   #plan3DCanvas{display:block; width:100%; height:100%; touch-action:none;}
+  #stage{position:relative; height:calc(100vh - 130px); min-height:440px; overflow:hidden; border:1px solid var(--line); border-radius:8px; background:#0e1620;}
+  #stage:fullscreen{height:100%; border:none; border-radius:0;}
+  #stage.fsfake{position:fixed; inset:0; z-index:100; height:100vh; border:none; border-radius:0;}
+  .drawer{position:absolute; top:0; bottom:0; width:min(380px,88%); z-index:20; background:var(--bg); transition:transform .22s ease; box-shadow:none;}
+  .drawer.left{left:0; transform:translateX(-100%); border-right:1px solid var(--line);}
+  .drawer.right{right:0; transform:translateX(100%); border-left:1px solid var(--line);}
+  .drawer.open{transform:none; box-shadow:0 0 24px rgba(0,0,0,.5);}
+  .drawerBody{height:100%; overflow-y:auto; padding:48px 12px 24px; -webkit-overflow-scrolling:touch;}
+  .drawerBody > .card{margin-bottom:12px;}
+  .drawerTab{position:absolute; top:35%; writing-mode:vertical-rl; padding:16px 9px; background:var(--accent); color:#0b1620; font-weight:600; border:none; box-shadow:0 2px 10px rgba(0,0,0,.4);}
+  .drawer.left .drawerTab{left:100%; border-radius:0 10px 10px 0;}
+  .drawer.right .drawerTab{right:100%; border-radius:10px 0 0 10px;}
+  #fsBtn{position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:30; padding:7px 12px; font-size:13px; background:rgba(28,39,53,.85);}
+  #stage.fp .drawerTab, #stage.fp #fsBtn{display:none;}
   #fpOverlay{display:none; position:absolute; inset:0;}
   #fpLookArea{position:absolute; inset:0;}
   #fpJoystick,#fpLook{position:absolute; bottom:16px; width:100px; height:100px; border-radius:50%; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.22); touch-action:none;}
@@ -165,23 +181,9 @@
     <div id="cornerList"></div>
   </div>
 
-  <div class="card">
-    <h2>Cômodos adicionados</h2>
-    <div id="roomList"><p class="empty">Nenhum cômodo ainda.</p></div>
-  </div>
 
-  <div class="card">
-    <h2>Planta 2D (arraste os cômodos para posicionar)</h2>
-    <div class="row" style="margin-bottom:10px;">
-      <button id="zoomOutBtn">− Zoom</button>
-      <button id="zoomInBtn">+ Zoom</button>
-      <button id="undoBtn" title="Desfazer (Ctrl+Z)">↩️ Desfazer</button>
-      <button id="redoBtn" title="Refazer (Ctrl+Y)">↪️ Refazer</button>
-      <button id="toggleOpeningMode">Ativar modo portas/janelas</button>
-      <button id="toggleWallDrawMode">Ativar modo parede manual</button>
-      <button id="toggleFreeDraw">✏️ Ativar desenho livre</button>
-      <button class="primary" id="toggle3DBtn">Ver em 3D</button>
-    </div>
+  <div class="card" id="stageCard">
+    <div id="stage">
     <div id="planWrap"><canvas id="planCanvas"></canvas></div>
     <div id="plan3DWrap">
       <canvas id="plan3DCanvas"></canvas>
@@ -191,6 +193,21 @@
         <div id="fpLook"><div id="fpLookKnob"></div></div>
         <button id="fpExitBtn">Sair</button>
       </div>
+    </div>
+      <aside id="drawerLeft" class="drawer left">
+        <button id="tabLeft" class="drawerTab" title="Mostrar/esconder ferramentas">⚙️ Ferramentas</button>
+        <div class="drawerBody">
+    <h2>Planta 2D (arraste os cômodos para posicionar)</h2>
+    <div class="row" style="margin-bottom:10px;">
+      <button id="zoomOutBtn">− Zoom</button>
+      <button id="zoomInBtn">+ Zoom</button>
+      <button id="undoBtn" title="Desfazer (Ctrl+Z)">↩️ Desfazer</button>
+      <button id="redoBtn" title="Refazer (Ctrl+Y)">↪️ Refazer</button>
+      <button id="toggleOpeningMode">Ativar modo portas/janelas</button>
+      <button id="toggleWallDrawMode">Ativar modo parede manual</button>
+      <button id="toggleFreeDraw">✏️ Ativar desenho livre</button>
+      <button id="fitBtn" title="Ajusta o zoom pra planta caber na tela">⤢ Ajustar à tela</button>
+      <button class="primary" id="toggle3DBtn">Ver em 3D</button>
     </div>
     <p class="hint" id="hint3D" style="display:none;">Arraste pra girar a câmera, roda do mouse (ou pinça no celular) pra dar zoom. Isso é só visualização — pra editar, volte ao 2D.</p>
     <div class="row" id="fpRow" style="display:none; margin-top:8px;">
@@ -209,7 +226,7 @@
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="fdShow" checked> mostrar desenho</label>
     </div>
     <p class="hint" id="freeDrawHint" style="display:none;">Desenho livre: risque a planta como um rascunho com a caneta da mesa (ou mouse/dedo). Depois desative o modo e coloque as medidas nos cômodos por cima. A borracha apaga o traço inteiro que você tocar. Se você terminar o traço encostando na ponta onde começou (formando um contorno fechado), ele vira um cômodo na hora — desmarque a opção "fechou o traço = vira cômodo" se quiser só rascunhar.</p>
-    <p class="hint" id="wallDrawHint">Modo parede manual: toque no ponto inicial, depois no ponto final da parede.</p>
+    <p class="hint" id="wallDrawHint">Modo parede manual: toque no ponto inicial e depois arraste até o ponto final: uma sombra mostra por onde a parede vai passar (verde = reta, amarelo = torta, vermelho = cruza/sobrepõe outra parede). Solte pra criar. No computador, mova o mouse e clique. Esc cancela o ponto inicial.</p>
     <p class="hint">Toque num cômodo pra selecionar, arraste pra mover. Com ele selecionado, arraste a alça verde acima dele pra girar livremente. Pinça com dois dedos (ou os botões de zoom acima) pra aproximar. Em cômodos com forma medida por AR/ângulos, aparecem bolinhas no meio de cada parede — toque numa pra editar só aquela parede.</p>
     <div class="row" style="margin-top:10px;">
       <button class="primary" id="exportPDF">Exportar PDF</button>
@@ -218,6 +235,15 @@
       <input type="file" id="importFile" accept="application/json" style="display:none;">
     </div>
     <p class="hint">Faça um backup sempre que terminar de ajustar a planta — se o link do site mudar, você restaura tudo a partir do arquivo.</p>
+  
+        </div>
+      </aside>
+      <aside id="drawerRight" class="drawer right">
+        <button id="tabRight" class="drawerTab" title="Mostrar/esconder cômodos">🏠 Cômodos</button>
+        <div class="drawerBody">
+  <div class="card">
+    <h2>Cômodos adicionados</h2>
+    <div id="roomList"><p class="empty">Nenhum cômodo ainda.</p></div>
   </div>
 
   <div class="card" id="manualWallCard" style="display:none;">
@@ -265,6 +291,13 @@
       <button id="removeOneWall" class="danger">Remover só esta parede</button>
     </div>
     <p class="hint">Remover só esta parede transforma o cômodo em paredes soltas, sem a parede escolhida (portas/janelas desse cômodo se perdem).</p>
+  </div>
+
+
+        </div>
+      </aside>
+      <button id="fsBtn" title="Tela cheia (Esc ou dois cliques no espaço vazio para sair)">⛶ Tela cheia</button>
+    </div>
   </div>
 
 </main>
@@ -772,6 +805,7 @@
   let wallDrawMode = false, wallDrawStart = null;
   let selectedManualWallId = null, draggingWall = null, dragWallStart = null;
   let pivotDrag = null, pivotSnap = null;
+  let wallPreview = null, wallTouchPending = false;
   let drawMode = false, drawTool = 'pen', curStroke = null, erasing = false, drawHistory = [];
 
   // --- Visão 3D ---
@@ -861,6 +895,7 @@
   }
   function enterFirstPerson(){
     fpMode = true;
+    document.getElementById('stage').classList.add('fp');
     fpKeys = {}; fpJoystickVec = {x:0,y:0}; fpLookVec = {x:0,y:0};
     threeControls.enabled = false;
     const clearance = (x,z) => { let m = 99; for(const sg of collisionSegs){ m = Math.min(m, segDist(x,z,sg.x1,sg.z1,sg.x2,sg.z2)); } return m; };
@@ -893,6 +928,7 @@
   function exitFirstPerson(){
     const wasFp = fpMode;
     fpMode = false;
+    document.getElementById('stage').classList.remove('fp');
     fpKeys = {}; fpJoystickVec = {x:0,y:0}; fpLookVec = {x:0,y:0};
     if(fpControls && fpControls.isLocked) fpControls.unlock();
     if(threeControls){
@@ -1131,7 +1167,7 @@
   window.addEventListener('resize', () => { if(view3D && threeRenderer) resize3D(); });
 
   document.getElementById('zoomInBtn').addEventListener('click', () => {
-    zoom = Math.min(3, zoom + 0.2);
+    zoom = Math.min(5, zoom + 0.2);
     renderPlan();
   });
   document.getElementById('zoomOutBtn').addEventListener('click', () => {
@@ -1141,10 +1177,10 @@
 
   document.getElementById('toggleWallDrawMode').addEventListener('click', () => {
     wallDrawMode = !wallDrawMode;
-    wallDrawStart = null;
+    wallDrawStart = null; wallPreview = null; wallTouchPending = false;
     document.getElementById('toggleWallDrawMode').textContent = wallDrawMode ? 'Desativar modo parede manual' : 'Ativar modo parede manual';
     document.getElementById('wallDrawHint').textContent = wallDrawMode
-      ? 'Modo ativo: toque no ponto inicial, depois no ponto final da parede.'
+      ? 'Modo ativo: toque no ponto inicial e arraste até o final — a sombra mostra por onde a parede passa (verde = reta, amarelo = torta, vermelho = cruza ou sobrepõe outra parede). Solte pra criar. No computador, mova o mouse e clique. Esc cancela o ponto inicial.'
       : 'Com o modo ativo, toque no ponto inicial e depois no ponto final da parede, direto na planta. Fica independente de qualquer cômodo.';
     renderPlan();
   });
@@ -1658,6 +1694,35 @@
     }
     if(wallDrawStart){
       const sx = wallDrawStart.x*eff+MARGIN, sy = wallDrawStart.y*eff+MARGIN;
+      if(wallDrawMode && wallPreview){
+        const ex = wallPreview.x*eff+MARGIN, ey = wallPreview.y*eff+MARGIN;
+        const ddx = wallPreview.x-wallDrawStart.x, ddy = wallPreview.y-wallDrawStart.y;
+        const plen = Math.hypot(ddx,ddy);
+        if(plen > 0.02){
+          const dev = Math.min(Math.abs(ddx), Math.abs(ddy)) / plen; // ~seno do desvio do eixo
+          const devDeg = Math.asin(Math.min(1,dev))*180/Math.PI;
+          const straight = devDeg < 0.5;
+          const bad = wallPreviewConflict(wallDrawStart.x, wallDrawStart.y, wallPreview.x, wallPreview.y);
+          const col = bad ? '#f87171' : (straight ? '#4ade80' : '#fbbf24');
+          pctx.save();
+          pctx.lineCap = 'round';
+          pctx.globalAlpha = 0.35; pctx.strokeStyle = col; pctx.lineWidth = Math.max(4, 0.15*eff);
+          pctx.beginPath(); pctx.moveTo(sx,sy); pctx.lineTo(ex,ey); pctx.stroke();
+          pctx.globalAlpha = 1; pctx.lineWidth = 1.5; pctx.setLineDash([6,5]);
+          pctx.beginPath(); pctx.moveTo(sx,sy); pctx.lineTo(ex,ey); pctx.stroke();
+          pctx.setLineDash([]);
+          pctx.fillStyle = col;
+          pctx.beginPath(); pctx.arc(ex,ey,6,0,Math.PI*2); pctx.fill();
+          if(wallPreview.snapped){ pctx.strokeStyle = '#22c55e'; pctx.lineWidth = 3; pctx.beginPath(); pctx.arc(ex,ey,13,0,Math.PI*2); pctx.stroke(); }
+          const txt = plen.toFixed(2)+'m · ' + (straight ? 'reta' : devDeg.toFixed(1)+'° torta') + (bad ? ' · cruza/sobrepõe outra parede!' : '');
+          pctx.font = '12px monospace'; pctx.textAlign = 'center'; pctx.textBaseline = 'bottom';
+          const mx2 = (sx+ex)/2, my2 = (sy+ey)/2 - 10;
+          const tw = pctx.measureText(txt).width + 10;
+          pctx.fillStyle = 'rgba(14,22,32,0.85)'; pctx.fillRect(mx2-tw/2, my2-16, tw, 18);
+          pctx.fillStyle = col; pctx.fillText(txt, mx2, my2);
+          pctx.restore();
+        }
+      }
       pctx.fillStyle = '#fbbf24';
       pctx.beginPath(); pctx.arc(sx,sy,7,0,Math.PI*2); pctx.fill();
     }
@@ -1699,6 +1764,49 @@
     return {x: cx * (planCanvas.width/rect.width), y: cy * (planCanvas.height/rect.height)};
   }
 
+  function placeWallTo(snapped){
+    if(!wallDrawStart) return;
+    const len = Math.hypot(snapped.x-wallDrawStart.x, snapped.y-wallDrawStart.y);
+    if(len > 0.05){
+      walls.push({id:Date.now(), x1:wallDrawStart.x, y1:wallDrawStart.y, x2:snapped.x, y2:snapped.y});
+      saveWalls();
+      tryCloseLoop();
+    }
+    wallDrawStart = null; wallPreview = null; wallTouchPending = false;
+  }
+  function updateWallPreview(p){
+    const eff = SCALE*zoom;
+    const mx = (p.x-MARGIN)/eff, my = (p.y-MARGIN)/eff;
+    const sn = snapPoint(mx, my);
+    wallPreview = {x:sn.x, y:sn.y, snapped: (sn.x !== mx || sn.y !== my)};
+  }
+  // a parede nova cruza ou fica por cima de outra parede (manual ou de cômodo)?
+  function wallPreviewConflict(ax,ay,bx,by){
+    const others = walls.map(w => ({ax:w.x1, ay:w.y1, bx:w.x2, by:w.y2}));
+    rooms.forEach(r => roomEdgesWorld(r).forEach(e => others.push(e)));
+    const rx = bx-ax, ry = by-ay, L = Math.hypot(rx,ry);
+    if(L < 0.05) return false;
+    for(const o of others){
+      const sx = o.bx-o.ax, sy = o.by-o.ay, M = Math.hypot(sx,sy);
+      if(M < 0.05) continue;
+      const denom = rx*sy - ry*sx;
+      const qx = o.ax-ax, qy = o.ay-ay;
+      if(Math.abs(denom)/(L*M) > 0.02){
+        const t = (qx*sy - qy*sx)/denom, u = (qx*ry - qy*rx)/denom;
+        const te = 0.05/L, ue = 0.05/M;
+        if(t > te && t < 1-te && u > ue && u < 1-ue) return true;
+      }else{
+        const d = Math.abs(qx*ry - qy*rx)/L;
+        if(d < 0.08){
+          const t1 = (qx*rx+qy*ry)/L, t2 = ((o.bx-ax)*rx+(o.by-ay)*ry)/L;
+          const ov = Math.min(L, Math.max(t1,t2)) - Math.max(0, Math.min(t1,t2));
+          if(ov > 0.1) return true;
+        }
+      }
+    }
+    return false;
+  }
+
   function dragStart(e){
     if(drawMode) return;
     const p = pointerPos(e);
@@ -1721,15 +1829,12 @@
       const eff = SCALE*zoom;
       const snapped = snapPoint((p.x-MARGIN)/eff, (p.y-MARGIN)/eff);
       if(!wallDrawStart){
-        wallDrawStart = snapped;
+        wallDrawStart = snapped; wallPreview = null;
+      }else if(e.touches){
+        // no toque: a sombra acompanha o dedo e a parede só é criada ao soltar
+        wallPreview = snapped; wallTouchPending = true;
       }else{
-        const len = Math.hypot(snapped.x-wallDrawStart.x, snapped.y-wallDrawStart.y);
-        if(len > 0.05){
-          walls.push({id:Date.now(), x1:wallDrawStart.x, y1:wallDrawStart.y, x2:snapped.x, y2:snapped.y});
-          saveWalls();
-          tryCloseLoop();
-        }
-        wallDrawStart = null;
+        placeWallTo(snapped);
       }
       renderPlan();
       e.preventDefault();
@@ -1813,6 +1918,11 @@
   }
   function dragMove(e){
     const p = pointerPos(e);
+    if(wallDrawMode){
+      if(wallDrawStart && (!e.touches || wallTouchPending)){ updateWallPreview(p); renderPlan(); }
+      if(e.touches) e.preventDefault();
+      return;
+    }
     if(pivotDrag){
       const eff = SCALE*zoom;
       const tx = (p.x-MARGIN)/eff, ty = (p.y-MARGIN)/eff;
@@ -1885,6 +1995,11 @@
     }
   }
   function dragEnd(){
+    if(wallTouchPending){
+      wallTouchPending = false;
+      if(wallDrawMode && wallDrawStart && wallPreview){ placeWallTo(wallPreview); renderPlan(); }
+      return;
+    }
     if(pivotDrag){
       pivotDrag = null; pivotSnap = null;
       saveWalls(); tryCloseLoop(); renderPlan();
@@ -1996,6 +2111,7 @@
       pinchStartDist = touchDist(e.touches[0], e.touches[1]);
       pinchStartZoom = zoom;
       dragging = null;
+      wallTouchPending = false; wallPreview = null;
       if(curStroke){ strokes = strokes.filter(x => x !== curStroke); curStroke = null; saveDraw(); renderPlan(); }
       if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer = null; }
       e.preventDefault();
@@ -2016,7 +2132,7 @@
     }
     if(e.touches.length === 2 && pinchStartDist){
       const d = touchDist(e.touches[0], e.touches[1]);
-      zoom = Math.min(3, Math.max(0.4, pinchStartZoom * (d/pinchStartDist)));
+      zoom = Math.min(5, Math.max(0.4, pinchStartZoom * (d/pinchStartDist)));
       renderPlan();
       e.preventDefault();
     }else if(e.touches.length === 1){
@@ -2248,6 +2364,58 @@
   };
   planCanvas.addEventListener('pointerup', endDrawStroke);
   planCanvas.addEventListener('pointercancel', endDrawStroke);
+
+  // ===== Abas laterais + tela cheia =====
+  const stageEl = document.getElementById('stage');
+  const drawerLeft = document.getElementById('drawerLeft'), drawerRight = document.getElementById('drawerRight');
+  document.getElementById('tabLeft').addEventListener('click', () => drawerLeft.classList.toggle('open'));
+  document.getElementById('tabRight').addEventListener('click', () => drawerRight.classList.toggle('open'));
+  // abre a aba da direita sozinha quando um editor (parede, porta/janela) aparece
+  ['manualWallCard','openingPickerCard','wallEditCard'].forEach(id => {
+    const el = document.getElementById(id);
+    new MutationObserver(() => { if(el.style.display === 'block') drawerRight.classList.add('open'); })
+      .observe(el, {attributes:true, attributeFilter:['style']});
+  });
+  function fitToScreen(){
+    const ww = planWrap.clientWidth, wh = planWrap.clientHeight;
+    if(!ww || !wh || (!rooms.length && !walls.length)) return;
+    let mx = 1, my = 1;
+    rooms.forEach(r => {
+      const cx = r.x + r.len/2, cy = r.y + r.wid/2, diag = Math.sqrt(r.len*r.len + r.wid*r.wid);
+      mx = Math.max(mx, cx + diag/2); my = Math.max(my, cy + diag/2);
+    });
+    walls.forEach(w => { mx = Math.max(mx, w.x1, w.x2); my = Math.max(my, w.y1, w.y2); });
+    zoom = Math.max(0.4, Math.min(5, Math.min((ww-MARGIN-48)/(mx*SCALE), (wh-MARGIN-48)/(my*SCALE))));
+    renderPlan();
+    planWrap.scrollLeft = 0; planWrap.scrollTop = 0;
+  }
+  document.getElementById('fitBtn').addEventListener('click', fitToScreen);
+  const fsBtn = document.getElementById('fsBtn');
+  const isFs = () => document.fullscreenElement === stageEl || stageEl.classList.contains('fsfake');
+  function afterFsChange(){
+    fsBtn.textContent = isFs() ? '✕ Sair da tela cheia' : '⛶ Tela cheia';
+    setTimeout(() => { if(isFs()) fitToScreen(); else renderPlan(); if(view3D && threeRenderer) resize3D(); }, 150);
+  }
+  function fakeFs(){ stageEl.classList.add('fsfake'); document.body.style.overflow = 'hidden'; afterFsChange(); }
+  function enterFs(){
+    if(stageEl.requestFullscreen){ stageEl.requestFullscreen().catch(fakeFs); }
+    else if(stageEl.webkitRequestFullscreen){ try{ stageEl.webkitRequestFullscreen(); }catch(e){ fakeFs(); } }
+    else fakeFs();
+  }
+  function exitFs(){
+    if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();
+    if(stageEl.classList.contains('fsfake')){ stageEl.classList.remove('fsfake'); document.body.style.overflow = ''; afterFsChange(); }
+  }
+  fsBtn.addEventListener('click', () => { if(isFs()) exitFs(); else enterFs(); });
+  document.addEventListener('fullscreenchange', afterFsChange);
+  document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && stageEl.classList.contains('fsfake')) exitFs(); });
+  document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && wallDrawMode && wallDrawStart){ wallDrawStart = null; wallPreview = null; wallTouchPending = false; renderPlan(); } });
+  // dois cliques no espaço vazio da planta (em tela cheia) = sair
+  planCanvas.addEventListener('dblclick', (e) => {
+    if(!isFs() || drawMode || wallDrawMode || openingMode) return;
+    const p = pointerPos(e);
+    if(!roomAt(p.x,p.y) && !wallAt(p.x,p.y) && !wallHitTestScreen(p.x,p.y)) exitFs();
+  });
 
   updateUndoButtons();
   renderRoomList();

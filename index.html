@@ -790,6 +790,10 @@
       maxX = Math.max(maxX, w.x1*eff+40, w.x2*eff+40);
       maxY = Math.max(maxY, w.y1*eff+40, w.y2*eff+40);
     });
+    strokes.forEach(st => st.pts.forEach(q => {
+      maxX = Math.max(maxX, q.x*eff+40);
+      maxY = Math.max(maxY, q.y*eff+40);
+    }));
     return {w:maxX, h:maxY};
   }
 
@@ -805,7 +809,7 @@
   let wallDrawMode = false, wallDrawStart = null;
   let selectedManualWallId = null, draggingWall = null, dragWallStart = null;
   let pivotDrag = null, pivotSnap = null;
-  let wallPreview = null, wallTouchPending = false;
+  let wallPreview = null, wallTouchPending = false, compactCanvas = false;
   let drawMode = false, drawTool = 'pen', curStroke = null, erasing = false, drawHistory = [];
 
   // --- Visão 3D ---
@@ -1162,9 +1166,9 @@
     document.getElementById('fpRow').style.display = view3D ? 'flex' : 'none';
     if(!view3D && fpMode) exitFirstPerson();
     document.getElementById('toggle3DBtn').textContent = view3D ? 'Voltar para 2D' : 'Ver em 3D';
-    if(view3D) build3DScene();
+    if(view3D) build3DScene(); else renderPlan();
   });
-  window.addEventListener('resize', () => { if(view3D && threeRenderer) resize3D(); });
+  window.addEventListener('resize', () => { if(view3D && threeRenderer) resize3D(); else if(!view3D) renderPlan(); });
 
   document.getElementById('zoomInBtn').addEventListener('click', () => {
     zoom = Math.min(5, zoom + 0.2);
@@ -1518,7 +1522,10 @@
   function renderPlan(){
     const eff = SCALE*zoom;
     const {w,h} = planSize();
-    planCanvas.width = w+MARGIN; planCanvas.height = h+MARGIN;
+    // a área de desenho acompanha o tamanho da tela (e cresce além dela quando a planta é maior)
+    const slack = compactCanvas ? 0 : 160;
+    const minW = compactCanvas ? 0 : planWrap.clientWidth, minH = compactCanvas ? 0 : planWrap.clientHeight;
+    planCanvas.width = Math.max(w+MARGIN+slack, minW); planCanvas.height = Math.max(h+MARGIN+slack, minH);
     const W = planCanvas.width, H = planCanvas.height;
     pctx.clearRect(0,0,W,H);
     // grid
@@ -2149,6 +2156,7 @@
     if(!rooms.length){ alert('Adicione pelo menos um cômodo antes de exportar.'); return; }
     const prevZoom = zoom;
     zoom = 1;
+    compactCanvas = true;
     renderPlan();
     const imgData = planCanvas.toDataURL('image/png');
     const { jsPDF } = window.jspdf;
@@ -2177,6 +2185,7 @@
     });
     pdf.save('planta2d.pdf');
     zoom = prevZoom;
+    compactCanvas = false;
     renderPlan();
   });
 

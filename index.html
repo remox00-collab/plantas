@@ -89,11 +89,11 @@
   #fpJoystick{left:16px;} #fpLook{right:16px;}
   #fpJoystickKnob,#fpLookKnob{position:absolute; left:30px; top:30px; width:40px; height:40px; border-radius:50%; background:rgba(255,255,255,0.28);}
   #fpExitBtn{position:absolute; top:10px; right:10px;}
-  #sunPanel{position:absolute; top:50px; left:50%; transform:translateX(-50%); width:min(440px, calc(100% - 110px)); z-index:6; display:flex; align-items:center; gap:8px; padding:6px 12px; background:rgba(20,28,40,.78); border:1px solid rgba(255,255,255,.18); border-radius:22px; backdrop-filter:blur(4px);}
-  #sunPanel button{padding:4px 10px; font-size:14px; border-radius:14px;}
-  #sunPanel input[type=range]{flex:1; min-width:0; height:28px; accent-color:var(--accent);}
-  #sunIcon{font-size:18px;}
-  #sunLabel{font-size:13px; min-width:42px; text-align:right;}
+  #sunPanel{position:absolute; top:8px; left:8px; width:172px; z-index:6; display:flex; align-items:center; gap:5px; padding:2px 8px; background:rgba(20,28,40,.78); border:1px solid rgba(255,255,255,.18); border-radius:22px; backdrop-filter:blur(4px);}
+  #sunPanel button{padding:1px 7px; font-size:11px; border-radius:12px; min-height:0;}
+  #sunPanel input[type=range]{flex:1; min-width:0; height:20px; accent-color:var(--accent);}
+  #sunIcon{font-size:13px;}
+  #sunLabel{font-size:11px; min-width:34px; text-align:right;}
   #planCanvas{display:block; touch-action:none;}
   .empty{color:var(--muted); font-size:13px; text-align:center; padding:20px 0;}
   .step{color:var(--accent); font-size:12px; font-weight:600; margin-bottom:8px;}
@@ -279,17 +279,17 @@
 
   <div class="card" id="openingPickerCard" style="display:none;">
     <h2>Adicionar na parede</h2>
+    <canvas id="openingPreview" style="width:100%;height:190px;border-radius:10px;display:block;background:linear-gradient(#8fc9ff,#e6f3ff);"></canvas>
+    <p class="hint mono" id="openingSpec" style="margin:6px 0 10px;"></p>
     <div class="fields">
-      <div><label>Tipo</label>
+      <div style="grid-column:1 / -1;"><label>Modelo</label>
         <select id="openingType">
-          <option value="door">Porta simples (0.8m)</option>
-          <option value="sliding">Porta de correr / balcão (1.5m)</option>
-          <option value="window">Janela simples (1.0m)</option>
-          <option value="windowBig">Janela grande (1.8m)</option>
         </select>
       </div>
       <div><label>Largura (m)</label><input id="openingWidth" inputmode="decimal"></div>
-      <div><label>Posição na parede (m do início)</label><input id="openingDist" inputmode="decimal"></div>
+      <div><label>Altura (m)</label><input id="openingHeight" inputmode="decimal"></div>
+      <div><label>Altura do peitoril (m)</label><input id="openingSill" inputmode="decimal"></div>
+      <div style="grid-column:1 / -1;"><label>Posição na parede (m do início)</label><input id="openingDist" inputmode="decimal"></div>
     </div>
     <p class="hint">Já colocada? Arraste-a na planta pra mover pela parede.</p>
     <div class="row" style="margin-top:10px;">
@@ -1274,6 +1274,91 @@
       return {ax:A.x, ay:A.z, bx:B.x, by:B.z};
     });
   }
+  // ===== Catálogo de portas e janelas =====
+  const OPEN_MODELS = {
+    door:       {name:'Porta de abrir',               type:'door',    kind:'hinged',    w:0.8, h:2.1, sill:0},
+    doorDouble: {name:'Porta dupla de abrir',         type:'door',    kind:'double',    w:1.6, h:2.1, sill:0},
+    doorEntry:  {name:'Porta de entrada almofadada',  type:'door',    kind:'entry',     w:0.9, h:2.2, sill:0},
+    sliding:    {name:'Porta de correr (vidro)',      type:'sliding', kind:'slideDoor', w:1.5, h:2.1, sill:0},
+    garage:     {name:'Portão de garagem',            type:'sliding', kind:'garage',    w:2.5, h:2.2, sill:0},
+    win2:       {name:'Janela de correr (2 folhas)',  type:'window',  kind:'winSlide',  w:1.5, h:1.1, sill:1.0},
+    winCase:    {name:'Janela de abrir (2 folhas)',   type:'window',  kind:'winCase',   w:1.2, h:1.2, sill:0.9},
+    winMax:     {name:'Janela maxim-ar',              type:'window',  kind:'winMax',    w:0.8, h:0.6, sill:1.5},
+    winFixed:   {name:'Janela fixa (vidro)',          type:'window',  kind:'winFixed',  w:1.2, h:1.2, sill:0.9}
+  };
+  const fmtM = v => (+v).toFixed(2).replace('.',',');
+  function legacyModel(o){
+    if(o.model && OPEN_MODELS[o.model]) return o.model;
+    if(o.type === 'sliding') return 'sliding';
+    if(o.type === 'window') return o.width >= 1.4 ? 'win2' : 'winCase';
+    return 'door';
+  }
+  function openDims(o, H){
+    const m = OPEN_MODELS[legacyModel(o)];
+    const sill = (o.sill != null && !isNaN(o.sill)) ? o.sill : m.sill;
+    let h = o.height || m.h;
+    if(sill + h > H) h = Math.max(0.3, H - sill);
+    return {h, sill, model: legacyModel(o)};
+  }
+  // Peças da parede: trechos cheios + o que fica embaixo (peitoril) e em cima (verga) de cada porta/janela
+  function wallPieces(ax,ay,bx,by,opens,H){
+    const cuts = opens.filter(o => o.cut);
+    const others = opens.filter(o => !o.cut && !cuts.some(c => o.dist >= c.dist-0.01 && o.dist+o.width <= c.dist+c.width+0.01));
+    const out = wallSegmentsForEdge(ax,ay,bx,by,cuts.concat(others)).map(s => Object.assign(s,{y0:0,y1:H}));
+    const len = Math.hypot(bx-ax,by-ay) || 0.001, ux=(bx-ax)/len, uy=(by-ay)/len;
+    others.forEach(o => {
+      const d = openDims(o,H), mid = o.dist + o.width/2;
+      const base = {mx:ax+ux*mid, my:ay+uy*mid, segLen:o.width, dx:bx-ax, dy:by-ay};
+      if(d.sill > 0.02) out.push(Object.assign({y0:0,y1:d.sill}, base));
+      if(d.sill + d.h < H - 0.02) out.push(Object.assign({y0:d.sill+d.h,y1:H}, base));
+    });
+    return out;
+  }
+  // Modelo 3D de uma porta/janela. x = ao longo da parede (centro em 0), y = para cima (0 = base do vão), z = espessura
+  function buildOpeningMesh(modelId, w, h, depth){
+    const m = OPEN_MODELS[modelId] || OPEN_MODELS.door, g = new THREE.Group();
+    const wood = new THREE.MeshStandardMaterial({color:0x8a5a33, roughness:0.7});
+    const white = new THREE.MeshStandardMaterial({color:0xf3f3f0, roughness:0.5});
+    const dark = new THREE.MeshStandardMaterial({color:0x2d3640, roughness:0.4, metalness:0.4});
+    const glass = new THREE.MeshStandardMaterial({color:0x9ad4ff, transparent:true, opacity:0.35, roughness:0.1, side:THREE.DoubleSide, depthWrite:false});
+    const box = (bw,bh,bd,x,y,z,mat,cast) => { const b = new THREE.Mesh(new THREE.BoxGeometry(bw,bh,bd), mat); b.position.set(x,y,z); b.castShadow = cast !== false; b.receiveShadow = true; g.add(b); return b; };
+    const isDoor = m.type !== 'window', ft = 0.05, d2 = depth + 0.02;
+    const fm = m.kind === 'slideDoor' ? dark : (isDoor ? wood : white);
+    if(m.kind !== 'garage'){
+      box(ft,h,d2,-w/2+ft/2,h/2,0,fm); box(ft,h,d2,w/2-ft/2,h/2,0,fm); box(w,ft,d2,0,h-ft/2,0,fm);
+      if(!isDoor) box(w,ft,d2,0,ft/2,0,fm);
+    }
+    const lw = w - 2*ft, lh = h - ft - (isDoor ? 0 : ft);
+    const leaf = (width, hingeX, ang, mat) => {
+      const piv = new THREE.Group(); piv.position.set(hingeX,0,0); piv.rotation.y = ang;
+      const dir = width >= 0 ? 1 : -1, aw = Math.abs(width);
+      const l = new THREE.Mesh(new THREE.BoxGeometry(aw, h-ft, 0.04), mat); l.position.set(dir*aw/2,(h-ft)/2,0); l.castShadow = true; l.receiveShadow = true; piv.add(l);
+      const k = new THREE.Mesh(new THREE.SphereGeometry(0.03,8,6), dark); k.position.set(dir*(aw-0.08),Math.min(1.0,h/2),0.04); piv.add(k);
+      g.add(piv); return {piv, l, aw, dir};
+    };
+    if(m.kind === 'hinged' || m.kind === 'entry'){
+      const L = leaf(lw, -w/2+ft, -1.1, wood);
+      if(m.kind === 'entry'){ [0.28,0.70].forEach(f => { const p = new THREE.Mesh(new THREE.BoxGeometry(lw*0.62, h*0.26, 0.012), new THREE.MeshStandardMaterial({color:0x6e4526, roughness:0.8})); p.position.set(lw/2, h*f, 0.026); L.piv.add(p); }); }
+    }else if(m.kind === 'double'){
+      leaf(lw/2, -w/2+ft, -1.1, wood); leaf(-lw/2, w/2-ft, 1.1, wood);
+    }else if(m.kind === 'slideDoor'){
+      box(lw/2+0.03, h-ft, 0.012, -lw/4, (h-ft)/2, 0.02, glass, false); box(lw/2+0.03, h-ft, 0.012, lw/4, (h-ft)/2, -0.02, glass, false);
+      box(0.04,h-ft,0.06,0,(h-ft)/2,0,dark);
+    }else if(m.kind === 'garage'){
+      box(w-0.04,h-0.04,0.05,0,h/2,0,new THREE.MeshStandardMaterial({color:0xcfd6dc, roughness:0.6}));
+      for(let i=1;i<8;i++) box(w-0.04,0.012,0.056,0,(h/8)*i,0,dark,false);
+    }else if(m.kind === 'winSlide'){
+      box(lw/2+0.03, lh, 0.012, -lw/4, h/2, 0.02, glass, false); box(lw/2+0.03, lh, 0.012, lw/4, h/2, -0.02, glass, false); box(0.04,lh,0.05,0,h/2,0,white);
+    }else if(m.kind === 'winCase'){
+      box(lw, lh, 0.012, 0, h/2, 0, glass, false); box(0.04,lh,0.05,0,h/2,0,white);
+    }else if(m.kind === 'winMax'){
+      box(lw, lh, 0.012, 0, h/2, 0, glass, false); box(lw,0.03,0.05,0,h*0.62,0,white);
+    }else{
+      box(lw, lh, 0.012, 0, h/2, 0, glass, false); box(0.03,lh,0.05,0,h/2,0,white); box(lw,0.03,0.05,0,h/2,0,white);
+    }
+    return g;
+  }
+
   function effectiveOpenings(r, withCuts){
     const res = (r.openings||[]).map(o => Object.assign({}, o));
     const myEdges = roomEdgesWorld(r);
@@ -1299,7 +1384,7 @@
             const p1 = proj(f.ax+vx*o.dist, f.ay+vy*o.dist);
             const p2 = proj(f.ax+vx*(o.dist+o.width), f.ay+vy*(o.dist+o.width));
             const a = Math.max(0, Math.min(p1,p2)), b = Math.min(L, Math.max(p1,p2));
-            if(b - a > 0.1) res.push({wallIndex:i, dist:a, width:b-a, type:o.type, linked:true});
+            if(b - a > 0.1) res.push({wallIndex:i, dist:a, width:b-a, type:o.type, model:o.model, height:o.height, sill:o.sill, linked:true});
           });
           if(withCuts && qi < myIdx) res.push({wallIndex:i, dist:lo, width:hi-lo, type:'merged', linked:true, cut:true});
         });
@@ -1322,10 +1407,10 @@
       return {mx:ax+ux*midD, my:ay+uy*midD, segLen:e-s, dx:bx-ax, dy:by-ay};
     });
   }
-  function addWallBox(parent, mx,my,segLen,dx,dy,height,thickness,color){
+  function addWallBox(parent, mx,my,segLen,dx,dy,height,thickness,color,y0){
     const geo = new THREE.BoxGeometry(segLen, height, thickness);
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({color}));
-    mesh.position.set(mx, height/2, my);
+    mesh.position.set(mx, (y0||0) + height/2, my);
     mesh.rotation.y = Math.atan2(-dy, dx);
     mesh.castShadow = true; mesh.receiveShadow = true;
     parent.add(mesh);
@@ -1379,11 +1464,21 @@
       for(let i=0;i<pts.length;i++){
         const a=pts[i], b=pts[(i+1)%pts.length];
         const wo = effOpen.filter(o=>o.wallIndex===i);
-        wallSegmentsForEdge(a.x,a.y,b.x,b.y,wo).forEach(s => {
-          addWallBox(group, s.mx,s.my,s.segLen,s.dx,s.dy,h,0.12,wColor);
-          const ep = segEndpoints(s.mx,s.my,s.dx,s.dy,s.segLen);
-          const p1 = localToWorldRoom(ep.x1,ep.y1,r), p2 = localToWorldRoom(ep.x2,ep.y2,r);
-          collisionSegs.push({x1:p1.x,z1:p1.z,x2:p2.x,z2:p2.z});
+        wallPieces(a.x,a.y,b.x,b.y,wo,h).forEach(s => {
+          addWallBox(group, s.mx,s.my,s.segLen,s.dx,s.dy,s.y1-s.y0,0.12,wColor,s.y0);
+          if(s.y0 === 0){
+            const ep = segEndpoints(s.mx,s.my,s.dx,s.dy,s.segLen);
+            const p1 = localToWorldRoom(ep.x1,ep.y1,r), p2 = localToWorldRoom(ep.x2,ep.y2,r);
+            collisionSegs.push({x1:p1.x,z1:p1.z,x2:p2.x,z2:p2.z});
+          }
+        });
+        const eL = Math.hypot(b.x-a.x,b.y-a.y) || 1;
+        wo.filter(o => !o.linked && !o.cut).forEach(o => {
+          const d = openDims(o,h), mid = o.dist + o.width/2;
+          const om = buildOpeningMesh(d.model, o.width, d.h, 0.12);
+          om.position.set(a.x + (b.x-a.x)/eL*mid, d.sill, a.y + (b.y-a.y)/eL*mid);
+          om.rotation.y = Math.atan2(-(b.y-a.y), b.x-a.x);
+          group.add(om);
         });
       }
       threeScene.add(group);
@@ -1797,17 +1892,64 @@
       ? 'Modo ativo: toque numa parede na planta pra adicionar uma porta ou janela ali.'
       : 'Com o modo ativo, toque numa parede de qualquer cômodo na planta pra adicionar.';
   });
-  document.getElementById('openingType').addEventListener('change', (e) => {
-    const defaults = {door:0.8, sliding:1.5, window:1.0, windowBig:1.8};
-    document.getElementById('openingWidth').value = defaults[e.target.value];
+  const openingSel = document.getElementById('openingType');
+  openingSel.innerHTML = Object.entries(OPEN_MODELS).map(([id,m]) => '<option value="' + id + '">' + m.name + ' (' + fmtM(m.w) + ' × ' + fmtM(m.h) + ' m)</option>').join('');
+  function setOpeningFields(model, w, h, sill){
+    openingSel.value = model;
+    document.getElementById('openingWidth').value = w;
+    document.getElementById('openingHeight').value = h;
+    document.getElementById('openingSill').value = sill;
+  }
+  let opPrev = null;
+  function updateOpeningPreview(){
+    const card = document.getElementById('openingPickerCard');
+    if(card.style.display === 'none') return;
+    const num = id => parseFloat(String(document.getElementById(id).value).replace(',','.'));
+    const model = openingSel.value, m = OPEN_MODELS[model];
+    const w = num('openingWidth') || m.w, h = num('openingHeight') || m.h, sill = isNaN(num('openingSill')) ? m.sill : num('openingSill');
+    document.getElementById('openingSpec').textContent = m.name + ' — largura ' + fmtM(w) + ' m · altura ' + fmtM(h) + ' m' + (m.type === 'window' || sill > 0 ? ' · peitoril ' + fmtM(sill) + ' m' : '');
+    if(typeof THREE === 'undefined') return;
+    if(!opPrev){
+      const cv = document.getElementById('openingPreview');
+      const rd = new THREE.WebGLRenderer({canvas:cv, antialias:true, alpha:true});
+      const sc = new THREE.Scene(), cam = new THREE.PerspectiveCamera(38, 1, 0.1, 50);
+      sc.add(new THREE.HemisphereLight(0xffffff, 0x8a8f99, 0.9));
+      const dl = new THREE.DirectionalLight(0xffffff, 0.8); dl.position.set(3,5,4); sc.add(dl);
+      opPrev = {rd, sc, cam, holder:null, t:0};
+      (function loop(){
+        requestAnimationFrame(loop);
+        if(document.getElementById('openingPickerCard').style.display === 'none' || !opPrev.holder) return;
+        const cw = cv.clientWidth || 300;
+        if(cv.width !== cw) { rd.setSize(cw, 190, false); cam.aspect = cw/190; cam.updateProjectionMatrix(); }
+        opPrev.t += 0.012; opPrev.holder.rotation.y = Math.sin(opPrev.t)*0.7;
+        rd.render(sc, cam);
+      })();
+    }
+    if(opPrev.holder){ opPrev.sc.remove(opPrev.holder); opPrev.holder.traverse(o => { if(o.geometry) o.geometry.dispose(); }); }
+    const holder = new THREE.Group(), H = Math.max(2.6, sill + h + 0.4), W = w + 1.4, wm = new THREE.MeshStandardMaterial({color:0xcbd5e1, roughness:0.9});
+    const wb = (bw,bh,x,y) => { const b = new THREE.Mesh(new THREE.BoxGeometry(bw,bh,0.12), wm); b.position.set(x,y,0); holder.add(b); };
+    wb((W-w)/2, H, -(w/2 + (W-w)/4), H/2); wb((W-w)/2, H, (w/2 + (W-w)/4), H/2);
+    if(sill > 0.02) wb(w, sill, 0, sill/2);
+    if(sill + h < H - 0.02) wb(w, H - sill - h, 0, (sill + h + H)/2);
+    const om = buildOpeningMesh(model, w, h, 0.12); om.position.y = sill; holder.add(om);
+    holder.position.y = -H/2; opPrev.holder = holder; opPrev.sc.add(holder);
+    const dist = Math.max(4.2, W*1.5, H*1.6); opPrev.cam.position.set(0, 0.4, dist); opPrev.cam.lookAt(0,0,0);
+  }
+  openingSel.addEventListener('change', () => {
+    const m = OPEN_MODELS[openingSel.value];
+    setOpeningFields(openingSel.value, m.w, m.h, m.sill); updateOpeningPreview();
   });
+  ['openingWidth','openingHeight','openingSill'].forEach(id => document.getElementById(id).addEventListener('input', updateOpeningPreview));
   document.getElementById('addOpening').addEventListener('click', () => {
     if(!pendingOpeningWall) return;
     const w = parseFloat(document.getElementById('openingWidth').value.replace(',','.'));
     const dist = parseFloat(document.getElementById('openingDist').value.replace(',','.'));
-    const typeSel = document.getElementById('openingType').value;
-    const type = typeSel === 'windowBig' ? 'window' : typeSel;
-    if(!w || w<=0 || isNaN(dist) || dist<0) return;
+    const model = document.getElementById('openingType').value, type = OPEN_MODELS[model].type;
+    const oh = parseFloat(document.getElementById('openingHeight').value.replace(',','.'));
+    const sill = parseFloat(document.getElementById('openingSill').value.replace(',','.'));
+    if(!w || w<=0 || isNaN(dist) || dist<0 || !oh || oh<=0 || isNaN(sill) || sill<0) return;
+    const roomH = pendingOpeningWall.room.height || 2.5;
+    if(sill + oh > roomH + 0.001){ alert('Altura + peitoril (' + fmtM(sill+oh) + ' m) passam do pé-direito do cômodo (' + fmtM(roomH) + ' m).'); return; }
     if(dist+w > pendingOpeningWall.wallLenM + 0.001){
       alert('Não cabe nessa parede (comprimento: ' + pendingOpeningWall.wallLenM.toFixed(2) + 'm).');
       return;
@@ -1815,9 +1957,9 @@
     const room = pendingOpeningWall.room;
     room.openings = room.openings || [];
     if(editOpeningIndex !== null){
-      room.openings[editOpeningIndex] = {wallIndex: pendingOpeningWall.index, dist, width:w, type};
+      room.openings[editOpeningIndex] = {wallIndex: pendingOpeningWall.index, dist, width:w, type, model, height:oh, sill};
     }else{
-      room.openings.push({wallIndex: pendingOpeningWall.index, dist, width:w, type});
+      room.openings.push({wallIndex: pendingOpeningWall.index, dist, width:w, type, model, height:oh, sill});
     }
     saveRooms(); renderPlan();
     document.getElementById('openingPickerCard').style.display = 'none';
@@ -2306,12 +2448,11 @@
         draggingOpening = oa;
         pendingOpeningWall = {room:oa.room, index:oa.wallIndex, wallLenM:oa.wallLenM};
         editOpeningIndex = oa.openingIndex;
-        document.getElementById('openingType').value = oa.opening.type === 'window' && oa.opening.width >= 1.4 ? 'windowBig' : oa.opening.type;
-        document.getElementById('openingWidth').value = oa.opening.width;
+        { const dm = openDims(oa.opening, oa.room.height || 2.5); setOpeningFields(dm.model, oa.opening.width, dm.h, dm.sill); }
         document.getElementById('openingDist').value = oa.opening.dist.toFixed(2);
         document.getElementById('addOpening').textContent = 'Salvar alterações';
         document.getElementById('removeOpening').style.display = 'inline-block';
-        document.getElementById('openingPickerCard').style.display = 'block';
+        document.getElementById('openingPickerCard').style.display = 'block'; updateOpeningPreview();
         e.preventDefault();
         return;
       }
@@ -2319,12 +2460,11 @@
       if(wr){
         pendingOpeningWall = wr;
         editOpeningIndex = null;
-        document.getElementById('openingType').value = 'door';
-        document.getElementById('openingWidth').value = '0.8';
+        setOpeningFields('door', OPEN_MODELS.door.w, OPEN_MODELS.door.h, OPEN_MODELS.door.sill);
         document.getElementById('openingDist').value = Math.max(0, (wr.tParam*wr.wallLenM - 0.4)).toFixed(2);
         document.getElementById('addOpening').textContent = 'Adicionar';
         document.getElementById('removeOpening').style.display = 'none';
-        document.getElementById('openingPickerCard').style.display = 'block';
+        document.getElementById('openingPickerCard').style.display = 'block'; updateOpeningPreview();
       }
       e.preventDefault();
       return;
